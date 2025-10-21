@@ -47,6 +47,18 @@ interface Protein {
   curation_status: string;
 }
 
+interface Metadata {
+  pdb_title?: string;
+  pdb_deposition_date?: string;
+  pdb_release_date?: string;
+  experimental_method?: string;
+  resolution_angstrom?: number;
+  biological_assembly_count?: number;
+  uniprot_accession?: string;
+  uniprot_id?: string;
+  uniprot_range?: string;
+}
+
 export default function ProteinPage() {
   const params = useParams();
   const router = useRouter();
@@ -54,6 +66,7 @@ export default function ProteinPage() {
 
   const [protein, setProtein] = useState<Protein | null>(null);
   const [domains, setDomains] = useState<Domain[]>([]);
+  const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -71,6 +84,20 @@ export default function ProteinPage() {
       .catch(err => {
         console.error('Failed to load protein:', err);
         setLoading(false);
+      });
+  }, [sourceId]);
+
+  // Fetch metadata
+  useEffect(() => {
+    fetch(`/api/protein/${sourceId}/metadata`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.metadata) {
+          setMetadata(data.metadata);
+        }
+      })
+      .catch(err => {
+        console.warn('Failed to load metadata:', err);
       });
   }, [sourceId]);
 
@@ -206,7 +233,68 @@ export default function ProteinPage() {
                   {(protein.partition_coverage * 100).toFixed(0)}%
                 </dd>
               </div>
+
+              {/* PDB Metadata */}
+              {metadata?.experimental_method && (
+                <>
+                  <div className="border-t pt-2 mt-2" />
+                  <div className="flex justify-between">
+                    <dt className="text-gray-600">Method</dt>
+                    <dd className="font-medium text-xs">
+                      {metadata.experimental_method}
+                    </dd>
+                  </div>
+                </>
+              )}
+              {metadata?.resolution_angstrom && (
+                <div className="flex justify-between">
+                  <dt className="text-gray-600">Resolution</dt>
+                  <dd className="font-medium">{metadata.resolution_angstrom.toFixed(2)} Å</dd>
+                </div>
+              )}
+              {metadata?.pdb_release_date && (
+                <div className="flex justify-between">
+                  <dt className="text-gray-600">Released</dt>
+                  <dd className="font-medium text-xs">
+                    {new Date(metadata.pdb_release_date).toLocaleDateString()}
+                  </dd>
+                </div>
+              )}
+              {metadata?.uniprot_accession && (
+                <>
+                  <div className="border-t pt-2 mt-2" />
+                  <div className="flex justify-between">
+                    <dt className="text-gray-600">UniProt</dt>
+                    <dd className="font-medium">
+                      <a
+                        href={`https://www.uniprot.org/uniprotkb/${metadata.uniprot_accession}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-800"
+                      >
+                        {metadata.uniprot_accession}
+                      </a>
+                    </dd>
+                  </div>
+                  {metadata.uniprot_range && (
+                    <div className="flex justify-between">
+                      <dt className="text-gray-600 text-xs">UP Range</dt>
+                      <dd className="font-mono text-xs text-gray-600">{metadata.uniprot_range}</dd>
+                    </div>
+                  )}
+                </>
+              )}
             </dl>
+
+            {/* PDB Title */}
+            {metadata?.pdb_title && (
+              <div className="mt-3 pt-3 border-t">
+                <div className="text-xs text-gray-500 mb-1">Structure Title</div>
+                <div className="text-xs text-gray-700 italic">
+                  {metadata.pdb_title}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Domain Table */}
@@ -295,6 +383,7 @@ export default function ProteinPage() {
             <StructureViewer
               proteinId={sourceId}
               domains={domains}
+              editedBoundaries={editedBoundaries}
               height="600px"
             />
           </div>

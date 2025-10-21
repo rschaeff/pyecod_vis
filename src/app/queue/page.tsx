@@ -10,6 +10,29 @@ interface QueueProtein {
   partition_quality: string;
   curation_status: string;
   sequence_length: number;
+  is_representative?: boolean;
+  cluster_size?: number;
+  pdb_release_date?: string;
+  experimental_method?: string;
+  resolution_angstrom?: number;
+  priority_score?: number;
+}
+
+interface ClusterMember {
+  source_id: string;
+  pdb_id: string;
+  chain_id: string;
+  sequence_length?: number;
+  curation_status?: string;
+  is_representative: boolean;
+  sequence_identity_to_rep?: number;
+}
+
+interface ClusterInfo {
+  cluster_id: number | null;
+  representative: string;
+  cluster_size: number;
+  members: ClusterMember[];
 }
 
 type SortField = 'source_id' | 'sequence_length' | 'domain_count' | 'partition_coverage';
@@ -23,9 +46,14 @@ export default function QueuePage() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const [showAll, setShowAll] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [clusterData, setClusterData] = useState<Map<string, ClusterInfo>>(new Map());
+  const [loadingClusters, setLoadingClusters] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    fetch('/api/queue/all')
+    setLoading(true);
+    fetch(`/api/queue/all?show_all=${showAll}`)
       .then(res => res.json())
       .then(data => {
         setProteins(data.proteins || []);
@@ -35,7 +63,7 @@ export default function QueuePage() {
         console.error('Failed to load queue:', err);
         setLoading(false);
       });
-  }, []);
+  }, [showAll]);
 
   // Filter proteins
   const filteredProteins = proteins.filter(p => {
@@ -72,6 +100,46 @@ export default function QueuePage() {
     }
   };
 
+  // Toggle cluster expansion
+  const toggleCluster = async (sourceId: string, clusterSize?: number) => {
+    // Don't expand if not in a cluster
+    if (!clusterSize || clusterSize === 1) return;
+
+    const newExpanded = new Set(expandedRows);
+
+    if (expandedRows.has(sourceId)) {
+      newExpanded.delete(sourceId);
+      setExpandedRows(newExpanded);
+    } else {
+      newExpanded.add(sourceId);
+      setExpandedRows(newExpanded);
+
+      // Fetch cluster data if not already loaded
+      if (!clusterData.has(sourceId) && !loadingClusters.has(sourceId)) {
+        setLoadingClusters(new Set(loadingClusters).add(sourceId));
+
+        try {
+          const res = await fetch(`/api/cluster/${sourceId}`);
+          const data = await res.json();
+
+          setClusterData(new Map(clusterData).set(sourceId, data));
+          setLoadingClusters(prev => {
+            const next = new Set(prev);
+            next.delete(sourceId);
+            return next;
+          });
+        } catch (err) {
+          console.error(`Failed to load cluster for ${sourceId}:`, err);
+          setLoadingClusters(prev => {
+            const next = new Set(prev);
+            next.delete(sourceId);
+            return next;
+          });
+        }
+      }
+    }
+  };
+
   // Sort indicator component
   const SortIndicator = ({ field }: { field: SortField }) => {
     if (sortField !== field) return <span className="text-gray-400">↕</span>;
@@ -100,6 +168,26 @@ export default function QueuePage() {
 
       {/* Filters */}
       <div className="mb-6 flex flex-wrap gap-4">
+        {/* Show all toggle */}
+        <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 rounded border border-gray-300">
+          <input
+            type="checkbox"
+            id="showAll"
+            checked={showAll}
+            onChange={(e) => {
+              setShowAll(e.target.checked);
+              setCurrentPage(1);
+              setExpandedRows(new Set()); // Clear expanded rows on toggle
+            }}
+            className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+          />
+          <label htmlFor="showAll" className="text-sm text-gray-700 cursor-pointer select-none">
+            Show all chains
+          </label>
+        </div>
+
+        <div className="h-8 w-px bg-gray-300" />
+
         <button
           onClick={() => { setFilter('all'); setCurrentPage(1); }}
           className={`px-4 py-2 rounded ${
@@ -209,46 +297,140 @@ export default function QueuePage() {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {paginatedProteins.map((protein) => (
-              <tr key={protein.source_id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                  {protein.source_id}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {protein.sequence_length}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {protein.domain_count}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <span className={protein.partition_coverage >= 0.9 ? 'text-green-600' : protein.partition_coverage >= 0.7 ? 'text-yellow-600' : 'text-red-600'}>
-                    {(protein.partition_coverage * 100).toFixed(0)}%
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <span className={`px-2 py-1 rounded text-xs ${
-                    protein.partition_quality === 'good'
-                      ? 'bg-green-100 text-green-800'
-                      : protein.partition_quality === 'low_coverage'
-                      ? 'bg-yellow-100 text-yellow-800'
-                      : 'bg-red-100 text-red-800'
-                  }`}>
-                    {protein.partition_quality}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {protein.curation_status}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  <Link
-                    href={`/protein/${protein.source_id}`}
-                    className="text-blue-600 hover:text-blue-800 font-medium"
+            {paginatedProteins.map((protein) => {
+              const isExpanded = expandedRows.has(protein.source_id);
+              const hasCluster = (protein.cluster_size ?? 1) > 1;
+              const cluster = clusterData.get(protein.source_id);
+              const isLoading = loadingClusters.has(protein.source_id);
+
+              return (
+                <>
+                  <tr
+                    key={protein.source_id}
+                    className={`hover:bg-gray-50 ${hasCluster ? 'cursor-pointer' : ''}`}
+                    onClick={() => hasCluster && toggleCluster(protein.source_id, protein.cluster_size)}
                   >
-                    Curate →
-                  </Link>
-                </td>
-              </tr>
-            ))}
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      <div className="flex items-center gap-2">
+                        {hasCluster && (
+                          <span className="text-gray-400 text-xs select-none">
+                            {isExpanded ? '▼' : '▶'}
+                          </span>
+                        )}
+                        <span>{protein.source_id}</span>
+                        {hasCluster && (
+                          <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+                            n={protein.cluster_size}
+                          </span>
+                        )}
+                        {protein.is_representative === false && (
+                          <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">
+                            member
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {protein.sequence_length}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {protein.domain_count}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <span className={protein.partition_coverage >= 0.9 ? 'text-green-600' : protein.partition_coverage >= 0.7 ? 'text-yellow-600' : 'text-red-600'}>
+                        {(protein.partition_coverage * 100).toFixed(0)}%
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <span className={`px-2 py-1 rounded text-xs ${
+                        protein.partition_quality === 'good'
+                          ? 'bg-green-100 text-green-800'
+                          : protein.partition_quality === 'low_coverage'
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {protein.partition_quality}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {protein.curation_status}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <Link
+                        href={`/protein/${protein.source_id}`}
+                        className="text-blue-600 hover:text-blue-800 font-medium"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Curate →
+                      </Link>
+                    </td>
+                  </tr>
+
+                  {/* Expanded cluster members */}
+                  {isExpanded && (
+                    <tr key={`${protein.source_id}-expanded`}>
+                      <td colSpan={7} className="px-6 py-4 bg-gray-50">
+                        {isLoading ? (
+                          <div className="text-sm text-gray-500 italic">Loading cluster members...</div>
+                        ) : cluster ? (
+                          <div className="space-y-2">
+                            <div className="text-xs font-medium text-gray-700 uppercase mb-2">
+                              Cluster Members ({cluster.cluster_size} total)
+                            </div>
+                            <div className="grid grid-cols-1 gap-1">
+                              {cluster.members.map((member) => (
+                                <div
+                                  key={member.source_id}
+                                  className="flex items-center gap-4 text-sm py-1 px-2 hover:bg-gray-100 rounded"
+                                >
+                                  <span className={`font-mono ${member.is_representative ? 'font-semibold' : ''}`}>
+                                    {member.source_id}
+                                  </span>
+                                  {member.is_representative && (
+                                    <span className="px-1.5 py-0.5 bg-blue-600 text-white rounded text-xs font-medium">
+                                      REP
+                                    </span>
+                                  )}
+                                  {member.sequence_identity_to_rep !== undefined && !member.is_representative && (
+                                    <span className="text-xs text-gray-500">
+                                      {(member.sequence_identity_to_rep * 100).toFixed(1)}% identity
+                                    </span>
+                                  )}
+                                  {member.sequence_length && (
+                                    <span className="text-xs text-gray-500">
+                                      {member.sequence_length} aa
+                                    </span>
+                                  )}
+                                  {member.curation_status && (
+                                    <span className={`px-1.5 py-0.5 rounded text-xs ${
+                                      member.curation_status === 'curated'
+                                        ? 'bg-green-100 text-green-700'
+                                        : member.curation_status === 'pending'
+                                        ? 'bg-yellow-100 text-yellow-700'
+                                        : 'bg-gray-100 text-gray-700'
+                                    }`}>
+                                      {member.curation_status}
+                                    </span>
+                                  )}
+                                  <Link
+                                    href={`/protein/${member.source_id}`}
+                                    className="ml-auto text-blue-600 hover:text-blue-800 text-xs"
+                                  >
+                                    View →
+                                  </Link>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-500 italic">Failed to load cluster members</div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </>
+              );
+            })}
           </tbody>
         </table>
 

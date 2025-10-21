@@ -81,6 +81,22 @@ export interface QueueItem {
   cluster_name?: string;
 }
 
+// Queue protein from /api/queue/all (with clustering support)
+export interface QueueProtein {
+  source_id: string;
+  sequence_length: number;
+  domain_count: number;
+  partition_coverage: number;
+  partition_quality: string;
+  curation_status: string;
+  pdb_release_date?: string;
+  experimental_method?: string;
+  resolution_angstrom?: number;
+  priority_score?: number;
+  is_representative?: boolean;
+  cluster_size?: number;
+}
+
 export interface CurationDecision {
   protein_id: number;
   curator: string;
@@ -105,8 +121,18 @@ export interface CurationResponse {
 }
 
 export interface ClusterMember {
-  member_protein_id: number;
-  member_source_id: string;
-  member_status: string;
-  sequence_identity_to_rep: number;
+  source_id: string;
+  pdb_id: string;
+  chain_id: string;
+  sequence_length?: number;
+  curation_status?: string;
+  is_representative: boolean;
+  sequence_identity_to_rep?: number;
+}
+
+export interface ClusterInfo {
+  cluster_id: number | null;
+  representative: string;
+  cluster_size: number;
+  members: ClusterMember[];
 }

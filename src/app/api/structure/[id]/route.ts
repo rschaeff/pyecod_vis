@@ -20,15 +20,9 @@ import { gunzip } from 'zlib';
 const execAsync = promisify(exec);
 const gunzipAsync = promisify(gunzip);
 
-interface RouteParams {
-  params: {
-    id: string;
-  };
-}
-
 export async function GET(
   request: NextRequest,
-  { params }: RouteParams
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;

@@ -10,9 +10,15 @@ interface Domain {
   assigned_t_group?: string;
 }
 
+interface EditedBoundary {
+  start: number;
+  end: number;
+}
+
 interface StructureViewerProps {
   proteinId: string;
   domains: Domain[];
+  editedBoundaries?: { [key: number]: EditedBoundary };
   width?: string;
   height?: string;
 }
@@ -32,6 +38,7 @@ const DOMAIN_COLORS = [
 export default function StructureViewer({
   proteinId,
   domains,
+  editedBoundaries = {},
   width = '100%',
   height = '500px'
 }: StructureViewerProps) {
@@ -39,12 +46,50 @@ export default function StructureViewer({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewer, setViewer] = useState<any>(null);
+  const [residueMappings, setResidueMappings] = useState<Map<number, number>>(new Map());
+  const [hasMappings, setHasMappings] = useState(false);
 
   // Callback ref - called when element is attached to DOM
   const viewerRef = useCallback((element: HTMLDivElement | null) => {
     console.log('[StructureViewer] Callback ref called with:', element);
     setViewerElement(element);
   }, []);
+
+  // Fetch residue mappings (SEQID → PDB numbering)
+  useEffect(() => {
+    async function fetchMappings() {
+      try {
+        console.log(`[StructureViewer] Fetching residue mappings for ${proteinId}...`);
+        const response = await fetch(`/api/protein/${proteinId}/residue-mapping`);
+
+        if (!response.ok) {
+          console.log('[StructureViewer] No residue mappings available (will use SEQID numbering)');
+          setHasMappings(false);
+          return;
+        }
+
+        const data = await response.json();
+
+        if (data.has_mappings && data.mapping_map) {
+          const map = new Map<number, number>();
+          Object.entries(data.mapping_map).forEach(([seqid, pdbPos]) => {
+            map.set(Number(seqid), Number(pdbPos));
+          });
+          setResidueMappings(map);
+          setHasMappings(true);
+          console.log(`[StructureViewer] Loaded ${map.size} residue mappings`);
+        } else {
+          console.log('[StructureViewer] No mappings in response');
+          setHasMappings(false);
+        }
+      } catch (err) {
+        console.warn('[StructureViewer] Error fetching residue mappings:', err);
+        setHasMappings(false);
+      }
+    }
+
+    fetchMappings();
+  }, [proteinId]);
 
   useEffect(() => {
     if (!viewerElement) {
@@ -131,22 +176,61 @@ export default function StructureViewer({
 
         // Color each domain differently - ONLY on the target chain
         console.log(`[StructureViewer] Coloring ${domains.length} domains on chain ${chainId}...`);
+        console.log(`[StructureViewer] Has residue mappings: ${hasMappings}`);
+
         domains.forEach((domain, index) => {
           const color = DOMAIN_COLORS[index % DOMAIN_COLORS.length];
-          // IMPORTANT: Include chain in selection to avoid coloring all chains
-          // Using SEQRES numbering (start_pos/end_pos) - works if structure is renumbered
+
+          // Use edited boundaries if available, otherwise use domain boundaries
+          const seqidStart = editedBoundaries[domain.id]?.start ?? domain.start_pos;
+          const seqidEnd = editedBoundaries[domain.id]?.end ?? domain.end_pos;
+          const isEdited = editedBoundaries[domain.id] !== undefined;
+
+          // Convert SEQID positions to PDB positions if mappings available
+          let startPos = seqidStart;
+          let endPos = seqidEnd;
+
+          if (hasMappings && residueMappings.size > 0) {
+            // Convert start position
+            const mappedStart = residueMappings.get(seqidStart);
+            if (mappedStart !== undefined) {
+              startPos = mappedStart;
+            } else {
+              console.warn(`  No mapping for start position ${seqidStart}, using SEQID`);
+            }
+
+            // Convert end position
+            const mappedEnd = residueMappings.get(seqidEnd);
+            if (mappedEnd !== undefined) {
+              endPos = mappedEnd;
+            } else {
+              console.warn(`  No mapping for end position ${seqidEnd}, using SEQID`);
+            }
+
+            console.log(`  Domain ${domain.domain_number}${isEdited ? ' (EDITED)' : ''}: SEQID ${seqidStart}-${seqidEnd} → PDB ${startPos}-${endPos}`);
+          } else {
+            console.log(`  Domain ${domain.domain_number}${isEdited ? ' (EDITED)' : ''}: Using SEQID ${seqidStart}-${seqidEnd} (no mappings)`);
+          }
+
           const selection = {
             chain: chainId,
-            resi: `${domain.start_pos}-${domain.end_pos}`
+            resi: `${startPos}-${endPos}`
           };
 
-          console.log(`  Domain ${domain.domain_number}: chain=${chainId} resi=${domain.start_pos}-${domain.end_pos} -> ${color}`);
           viewerInstance.setStyle(selection, {
             cartoon: {
               color: color,
               opacity: 0.9
             }
           });
+        });
+
+        // Add hover labels to show residue information
+        console.log('[StructureViewer] Adding hover labels...');
+        viewerInstance.setHoverable({}, true, (atom: any) => {
+          if (!atom) return '';
+          // Show: residue name, chain, and residue number
+          return `${atom.resn} ${atom.chain}:${atom.resi}`;
         });
 
         // Render and zoom to fit
@@ -172,7 +256,7 @@ export default function StructureViewer({
     return () => {
       isMounted = false;
     };
-  }, [proteinId, domains, viewerElement]);
+  }, [proteinId, domains, viewerElement, hasMappings, residueMappings, editedBoundaries]);
 
   return (
     <div className="relative">
@@ -181,6 +265,7 @@ export default function StructureViewer({
         ref={viewerRef}
         style={{ width, height, position: 'relative' }}
         className="rounded border border-gray-200"
+        title="Hover over residues to see chain:position"
       />
 
       {/* Overlay loading state */}
@@ -210,36 +295,51 @@ export default function StructureViewer({
         </div>
       )}
 
-      {/* Domain Legend */}
-      {domains.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-3">
-          {domains.map((domain, index) => (
-            <div key={domain.id} className="flex items-center gap-2 text-sm">
-              <div
-                className="w-4 h-4 rounded"
-                style={{ backgroundColor: DOMAIN_COLORS[index % DOMAIN_COLORS.length] }}
-              />
-              <span className="font-medium">
-                Domain {domain.domain_number}
-              </span>
-              <span className="text-gray-500">
-                ({domain.start_pos}-{domain.end_pos})
-              </span>
-              {domain.assigned_t_group && (
-                <span className="text-gray-400 text-xs">
-                  {domain.assigned_t_group}
-                </span>
-              )}
-            </div>
-          ))}
-          {domains.length === 0 && (
-            <div className="text-sm text-gray-500">
-              <span className="inline-block w-4 h-4 rounded mr-2" style={{ backgroundColor: '#CCCCCC' }} />
-              No domains (shown in gray)
-            </div>
-          )}
+      {/* Domain Legend and Controls */}
+      <div className="mt-3 space-y-2">
+        {/* Hover hint */}
+        <div className="text-xs text-gray-500 italic">
+          💡 Hover over residues to see chain:position
         </div>
-      )}
+
+        {/* Domain legend */}
+        {domains.length > 0 && (
+          <div className="flex flex-wrap gap-3">
+            {domains.map((domain, index) => {
+              const isEdited = editedBoundaries[domain.id] !== undefined;
+              const displayStart = editedBoundaries[domain.id]?.start ?? domain.start_pos;
+              const displayEnd = editedBoundaries[domain.id]?.end ?? domain.end_pos;
+
+              return (
+                <div key={domain.id} className="flex items-center gap-2 text-sm">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: DOMAIN_COLORS[index % DOMAIN_COLORS.length] }}
+                  />
+                  <span className="font-medium">
+                    Domain {domain.domain_number}
+                  </span>
+                  <span className={isEdited ? "text-blue-600 font-semibold" : "text-gray-500"}>
+                    ({displayStart}-{displayEnd})
+                    {isEdited && ' ✎'}
+                  </span>
+                  {domain.assigned_t_group && (
+                    <span className="text-gray-400 text-xs">
+                      {domain.assigned_t_group}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            {domains.length === 0 && (
+              <div className="text-sm text-gray-500">
+                <span className="inline-block w-4 h-4 rounded mr-2" style={{ backgroundColor: '#CCCCCC' }} />
+                No domains (shown in gray)
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

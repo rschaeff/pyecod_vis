@@ -1,8 +1,11 @@
 /**
  * GET /api/queue/all
  *
- * Returns all proteins in curation (not filtered by clustering)
- * Used for Phase 1 before clustering data is loaded
+ * Returns proteins in curation queue with clustering support
+ *
+ * Query params:
+ *   - show_all: true/false (default: false) - show all chains or just cluster representatives
+ *   - limit: number (default: 100) - max proteins to return
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -11,27 +14,73 @@ import { query } from '@/lib/db';
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
+    const showAll = searchParams.get('show_all') === 'true';
     const limit = parseInt(searchParams.get('limit') || '100');
 
-    const sql = `
-      SELECT
-        source_id,
-        sequence_length,
-        domain_count,
-        partition_coverage,
-        partition_quality,
-        curation_status
-      FROM ecod_curation.protein
-      WHERE curation_status = 'pending'
-      ORDER BY processed_at DESC
-      LIMIT $1
-    `;
+    let sql: string;
+
+    if (showAll) {
+      // Show all proteins (including cluster members)
+      sql = `
+        SELECT
+          p.source_id,
+          p.sequence_length,
+          p.domain_count,
+          p.partition_coverage,
+          p.partition_quality,
+          p.curation_status,
+          p.release_date,
+          cm.is_representative,
+          (
+            SELECT COUNT(*)
+            FROM ecod_curation.cluster_membership cm2
+            WHERE cm2.cluster_id = cm.cluster_id
+              AND cm2.cluster_rank = cm.cluster_rank
+          ) as cluster_size
+        FROM ecod_curation.protein p
+        LEFT JOIN ecod_curation.cluster_membership cm ON p.id = cm.protein_id
+        WHERE p.curation_status = 'pending'
+        ORDER BY
+          p.processed_at DESC
+        LIMIT $1
+      `;
+    } else {
+      // Show only cluster representatives (default)
+      sql = `
+        SELECT
+          p.source_id,
+          p.sequence_length,
+          p.domain_count,
+          p.partition_coverage,
+          p.partition_quality,
+          p.curation_status,
+          p.release_date,
+          COALESCE(cm.is_representative, true) as is_representative,
+          COALESCE(
+            (
+              SELECT COUNT(*)
+              FROM ecod_curation.cluster_membership cm2
+              WHERE cm2.cluster_id = cm.cluster_id
+                AND cm2.cluster_rank = cm.cluster_rank
+            ),
+            1
+          ) as cluster_size
+        FROM ecod_curation.protein p
+        LEFT JOIN ecod_curation.cluster_membership cm ON p.id = cm.protein_id
+        WHERE p.curation_status = 'pending'
+          AND (cm.is_representative = true OR cm.is_representative IS NULL)
+        ORDER BY
+          p.processed_at DESC
+        LIMIT $1
+      `;
+    }
 
     const result = await query(sql, [limit]);
 
     return NextResponse.json({
       proteins: result.rows,
-      total: result.rowCount
+      total: result.rowCount,
+      show_all: showAll
     });
 
   } catch (error) {
