@@ -39,7 +39,7 @@ export interface Domain {
   assignment_method: string;
   classification_level: string;
   confidence: number;
-  curator_decision?: 'approved' | 'modified' | 'rejected';
+  curator_decision?: 'pending' | 'accepted' | 'modified' | 'rejected' | 'needs_expert';
   curator_name?: string;
   curated_at?: string;
   evidence: Evidence[];
@@ -103,13 +103,14 @@ export interface CurationDecision {
   decision: 'approved' | 'rejected' | 'needs_review';
   domains: DomainDecision[];
   notes?: string;
+  breakpoints?: number[];
 }
 
 export interface DomainDecision {
   domain_id: number;
   start_pos: number;
   end_pos: number;
-  curator_decision: 'approved' | 'modified' | 'rejected';
+  curator_decision: 'pending' | 'accepted' | 'modified' | 'rejected' | 'needs_expert';
 }
 
 export interface CurationResponse {

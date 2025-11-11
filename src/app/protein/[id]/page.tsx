@@ -49,6 +49,8 @@ interface Protein {
 
 interface Metadata {
   pdb_title?: string;
+  entity_description?: string;
+  entity_id?: number;
   pdb_deposition_date?: string;
   pdb_release_date?: string;
   experimental_method?: string;
@@ -72,6 +74,15 @@ export default function ProteinPage() {
 
   // Boundary edit state
   const [editedBoundaries, setEditedBoundaries] = useState<{[key: number]: {start: number, end: number}}>({});
+
+  // Breakpoint collection state
+  const [breakpoints, setBreakpoints] = useState<number[]>([]);
+  const [isCollectingBreakpoints, setIsCollectingBreakpoints] = useState(false);
+
+  // Modal state
+  const [showModal, setShowModal] = useState(false);
+  const [modalType, setModalType] = useState<'reject' | 'flag'>('reject');
+  const [modalNotes, setModalNotes] = useState('');
 
   useEffect(() => {
     fetch(`/api/protein/${sourceId}`)
@@ -112,7 +123,22 @@ export default function ProteinPage() {
     }));
   };
 
-  const handleApprove = async () => {
+  const handleBreakpointClick = (position: number) => {
+    setBreakpoints(prev => {
+      // Toggle if already exists
+      if (prev.includes(position)) {
+        return prev.filter(p => p !== position);
+      }
+      // Add and sort
+      return [...prev, position].sort((a, b) => a - b);
+    });
+  };
+
+  const removeBreakpoint = (position: number) => {
+    setBreakpoints(prev => prev.filter(p => p !== position));
+  };
+
+  const submitCuration = async (decision: string, notes: string, breakpointsToSubmit?: number[]) => {
     if (!protein) return;
 
     setSubmitting(true);
@@ -120,14 +146,16 @@ export default function ProteinPage() {
     const curationData = {
       protein_id: protein.id,
       curator: 'rschaeff',
-      decision: 'approved',
+      decision: decision,
       domains: domains.map(domain => ({
         domain_id: domain.id,
         start_pos: editedBoundaries[domain.id]?.start || domain.start_pos,
         end_pos: editedBoundaries[domain.id]?.end || domain.end_pos,
-        curator_decision: editedBoundaries[domain.id] ? 'modified' : 'approved'
+        curator_decision: decision === 'rejected' ? 'rejected' :
+                         (editedBoundaries[domain.id] ? 'modified' : 'accepted')
       })),
-      notes: 'Curated via pyecod_vis'
+      notes: notes,
+      breakpoints: breakpointsToSubmit && breakpointsToSubmit.length > 0 ? breakpointsToSubmit : undefined
     };
 
     try {
@@ -157,6 +185,30 @@ export default function ProteinPage() {
     }
   };
 
+  const handleApprove = () => submitCuration('approved', 'Approved via pyecod_vis');
+
+  const handleReject = () => {
+    setModalType('reject');
+    setModalNotes('');
+    setShowModal(true);
+  };
+
+  const handleFlag = () => {
+    setModalType('flag');
+    setModalNotes('');
+    setShowModal(true);
+  };
+
+  const handleModalSubmit = () => {
+    const decision = modalType === 'reject' ? 'rejected' : 'needs_review';
+    const defaultNotes = modalType === 'reject'
+      ? 'Rejected via pyecod_vis'
+      : 'Flagged for expert review via pyecod_vis';
+
+    submitCuration(decision, modalNotes || defaultNotes, breakpoints.length > 0 ? breakpoints : undefined);
+    setShowModal(false);
+  };
+
   if (loading) {
     return (
       <main className="max-w-7xl mx-auto px-4 py-8">
@@ -177,29 +229,45 @@ export default function ProteinPage() {
     <main className="min-h-screen bg-gray-50">
       {/* Header Bar */}
       <div className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/queue"
-              className="text-blue-600 hover:text-blue-800 font-medium"
-            >
-              ← Queue
-            </Link>
-            <div className="h-6 w-px bg-gray-300" />
-            <h1 className="text-2xl font-bold text-gray-900">
-              {protein.source_id}
-            </h1>
-            <span className={`px-3 py-1 rounded text-sm ${
-              protein.partition_quality === 'good'
-                ? 'bg-green-100 text-green-800'
-                : 'bg-yellow-100 text-yellow-800'
-            }`}>
-              {protein.partition_quality}
-            </span>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Link
+                href="/queue"
+                className="text-blue-600 hover:text-blue-800 font-medium"
+              >
+                ← Queue
+              </Link>
+              <div className="h-6 w-px bg-gray-300" />
+              <h1 className="text-2xl font-bold text-gray-900">
+                {protein.source_id}
+              </h1>
+              <span className={`px-3 py-1 rounded text-sm ${
+                protein.partition_quality === 'good'
+                  ? 'bg-green-100 text-green-800'
+                  : 'bg-yellow-100 text-yellow-800'
+              }`}>
+                {protein.partition_quality}
+              </span>
+            </div>
+            <div className="text-sm text-gray-600">
+              {protein.sequence_length} residues • {protein.domain_count} domain{protein.domain_count !== 1 ? 's' : ''} • {(protein.partition_coverage * 100).toFixed(0)}% coverage
+            </div>
           </div>
-          <div className="text-sm text-gray-600">
-            {protein.sequence_length} residues • {protein.domain_count} domain{protein.domain_count !== 1 ? 's' : ''} • {(protein.partition_coverage * 100).toFixed(0)}% coverage
-          </div>
+
+          {/* Entity/Chain Description */}
+          {metadata?.entity_description && (
+            <div className="text-base text-gray-700 font-medium">
+              Chain {protein.chain_id}: {metadata.entity_description}
+            </div>
+          )}
+
+          {/* PDB Title */}
+          {metadata?.pdb_title && (
+            <div className="text-sm text-gray-600 italic">
+              {metadata.pdb_title}
+            </div>
+          )}
         </div>
       </div>
 
@@ -285,16 +353,6 @@ export default function ProteinPage() {
                 </>
               )}
             </dl>
-
-            {/* PDB Title */}
-            {metadata?.pdb_title && (
-              <div className="mt-3 pt-3 border-t">
-                <div className="text-xs text-gray-500 mb-1">Structure Title</div>
-                <div className="text-xs text-gray-700 italic">
-                  {metadata.pdb_title}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Domain Table */}
@@ -384,6 +442,9 @@ export default function ProteinPage() {
               proteinId={sourceId}
               domains={domains}
               editedBoundaries={editedBoundaries}
+              breakpoints={breakpoints}
+              isCollectingBreakpoints={isCollectingBreakpoints}
+              onBreakpointClick={handleBreakpointClick}
               height="600px"
             />
           </div>
@@ -391,6 +452,56 @@ export default function ProteinPage() {
 
         {/* RIGHT COLUMN: Curation Decision Panel */}
         <div className="col-span-3 space-y-4">
+          {/* Breakpoint Collection Panel */}
+          <div className="bg-white rounded-lg shadow p-4 sticky top-6">
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">Mark Breakpoints</h2>
+
+            <button
+              onClick={() => setIsCollectingBreakpoints(!isCollectingBreakpoints)}
+              className={`w-full px-4 py-2 rounded-lg font-medium transition-colors ${
+                isCollectingBreakpoints
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+              }`}
+            >
+              {isCollectingBreakpoints ? '✓ Collecting Breakpoints (click structure)' : '📍 Start Marking Breakpoints'}
+            </button>
+
+            {breakpoints.length > 0 && (
+              <div className="mt-3 p-3 bg-gray-50 rounded">
+                <div className="text-xs font-medium text-gray-700 mb-2">
+                  Collected Breakpoints ({breakpoints.length})
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {breakpoints.map(pos => (
+                    <div
+                      key={pos}
+                      className="flex items-center gap-1 bg-white border rounded px-2 py-0.5 text-xs"
+                    >
+                      <span className="font-mono">{pos}</span>
+                      <button
+                        onClick={() => removeBreakpoint(pos)}
+                        className="text-gray-400 hover:text-red-600"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setBreakpoints([])}
+                  className="mt-2 text-xs text-red-600 hover:text-red-800"
+                >
+                  Clear all
+                </button>
+              </div>
+            )}
+
+            <div className="mt-2 text-xs text-gray-500">
+              💡 Mark positions where you see domain splits
+            </div>
+          </div>
+
           {/* Decision Panel */}
           <div className="bg-white rounded-lg shadow p-4 sticky top-6">
             <h2 className="text-sm font-semibold text-gray-700 mb-4">Curation Decision</h2>
@@ -411,6 +522,7 @@ export default function ProteinPage() {
 
               <button
                 className="w-full px-4 py-3 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors font-medium text-left"
+                onClick={handleReject}
                 disabled={submitting}
               >
                 <div className="flex items-center justify-between">
@@ -423,6 +535,7 @@ export default function ProteinPage() {
 
               <button
                 className="w-full px-4 py-3 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 transition-colors font-medium text-left"
+                onClick={handleFlag}
                 disabled={submitting}
               >
                 <div className="flex items-center justify-between">
@@ -507,6 +620,105 @@ export default function ProteinPage() {
           </div>
         </div>
       </div>
+
+      {/* Reject/Flag Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4">
+            <div className="px-6 py-4 border-b">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {modalType === 'reject' ? 'Reject Partitioning' : 'Flag for Review'}
+              </h3>
+            </div>
+
+            <div className="px-6 py-4 space-y-4">
+              {/* Breakpoints Section */}
+              {breakpoints.length > 0 && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <div className="text-sm font-medium text-gray-700 mb-2">
+                    Breakpoints Collected ({breakpoints.length})
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {breakpoints.map(pos => (
+                      <div
+                        key={pos}
+                        className="flex items-center gap-1 bg-white border border-blue-300 rounded px-2 py-1 text-sm"
+                      >
+                        <span className="font-mono text-blue-700">{pos}</span>
+                        <button
+                          onClick={() => removeBreakpoint(pos)}
+                          className="text-gray-400 hover:text-red-600 ml-1"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-xs text-gray-600 mt-2">
+                    These positions will be included for downstream repartitioning
+                  </div>
+                </div>
+              )}
+
+              {/* Notes Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Notes (optional)
+                </label>
+                <textarea
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  rows={4}
+                  placeholder={
+                    modalType === 'reject'
+                      ? 'Describe why the partitioning is incorrect...'
+                      : 'Describe what needs expert attention...'
+                  }
+                  value={modalNotes}
+                  onChange={(e) => setModalNotes(e.target.value)}
+                />
+              </div>
+
+              {/* Explanation */}
+              <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded">
+                {modalType === 'reject' ? (
+                  <>
+                    <strong>Reject</strong> when domain boundaries are objectively wrong.
+                    {breakpoints.length > 0
+                      ? ' The breakpoints you marked will guide repartitioning.'
+                      : ' Consider marking breakpoints on the structure if you see where domains should split.'}
+                  </>
+                ) : (
+                  <>
+                    <strong>Flag for Review</strong> when classification is uncertain or needs expert judgment.
+                    This keeps the current partitioning but marks it for expert attention.
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+              <button
+                onClick={() => setShowModal(false)}
+                className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100"
+                disabled={submitting}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleModalSubmit}
+                className={`px-4 py-2 text-white rounded-lg ${
+                  modalType === 'reject'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-yellow-600 hover:bg-yellow-700'
+                }`}
+                disabled={submitting}
+              >
+                {submitting ? 'Submitting...' : modalType === 'reject' ? 'Reject' : 'Flag'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

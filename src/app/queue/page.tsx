@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment } from 'react';
 import Link from 'next/link';
 
 interface QueueProtein {
@@ -47,13 +47,14 @@ export default function QueuePage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [showAll, setShowAll] = useState(false);
+  const [singleCharOnly, setSingleCharOnly] = useState(true); // Default to filtering multi-char chains
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [clusterData, setClusterData] = useState<Map<string, ClusterInfo>>(new Map());
   const [loadingClusters, setLoadingClusters] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/queue/all?show_all=${showAll}`)
+    fetch(`/api/queue/all?show_all=${showAll}&single_char_only=${singleCharOnly}`)
       .then(res => res.json())
       .then(data => {
         setProteins(data.proteins || []);
@@ -63,7 +64,7 @@ export default function QueuePage() {
         console.error('Failed to load queue:', err);
         setLoading(false);
       });
-  }, [showAll]);
+  }, [showAll, singleCharOnly]);
 
   // Filter proteins
   const filteredProteins = proteins.filter(p => {
@@ -157,9 +158,17 @@ export default function QueuePage() {
   return (
     <main className="max-w-7xl mx-auto px-4 py-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Curation Queue
-        </h1>
+        <div className="flex items-center justify-between mb-2">
+          <h1 className="text-3xl font-bold text-gray-900">
+            Curation Queue
+          </h1>
+          <Link
+            href="/browse"
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors"
+          >
+            Browse Curated →
+          </Link>
+        </div>
         <p className="text-gray-600">
           Showing {paginatedProteins.length} of {filteredProteins.length} proteins
           {filteredProteins.length !== proteins.length && ` (${proteins.length} total)`}
@@ -183,6 +192,24 @@ export default function QueuePage() {
           />
           <label htmlFor="showAll" className="text-sm text-gray-700 cursor-pointer select-none">
             Show all chains
+          </label>
+        </div>
+
+        {/* Single-char chains only toggle */}
+        <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 rounded border border-gray-300">
+          <input
+            type="checkbox"
+            id="singleCharOnly"
+            checked={singleCharOnly}
+            onChange={(e) => {
+              setSingleCharOnly(e.target.checked);
+              setCurrentPage(1);
+              setExpandedRows(new Set());
+            }}
+            className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+          />
+          <label htmlFor="singleCharOnly" className="text-sm text-gray-700 cursor-pointer select-none">
+            Single-char chains only
           </label>
         </div>
 
@@ -304,9 +331,8 @@ export default function QueuePage() {
               const isLoading = loadingClusters.has(protein.source_id);
 
               return (
-                <>
+                <Fragment key={protein.source_id}>
                   <tr
-                    key={protein.source_id}
                     className={`hover:bg-gray-50 ${hasCluster ? 'cursor-pointer' : ''}`}
                     onClick={() => hasCluster && toggleCluster(protein.source_id, protein.cluster_size)}
                   >
@@ -428,7 +454,7 @@ export default function QueuePage() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
           </tbody>

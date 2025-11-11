@@ -1,42 +1,54 @@
 /**
  * POST /api/auth/login
  *
- * Authenticate user and create session
+ * Simple username-based login for internal tool
+ * Creates session and sets cookie
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateUser, createSessionCookie } from '@/lib/auth';
+import { createSession, setSessionCookie } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { username, password } = body;
+    const { username } = body;
 
-    if (!username || !password) {
+    if (!username) {
       return NextResponse.json(
-        { error: 'Username and password required' },
+        { error: 'Username required' },
         { status: 400 }
       );
     }
 
-    const sessionId = await authenticateUser(username, password);
+    // Get IP and User-Agent for session tracking
+    const ipAddress = request.headers.get('x-forwarded-for') ||
+                     request.headers.get('x-real-ip') ||
+                     'unknown';
+    const userAgent = request.headers.get('user-agent') || 'unknown';
 
-    if (!sessionId) {
+    // Create session
+    const sessionInfo = await createSession(username, ipAddress, userAgent);
+
+    if (!sessionInfo) {
       return NextResponse.json(
-        { error: 'Invalid credentials' },
+        { error: 'Invalid username or curator is inactive' },
         { status: 401 }
       );
     }
 
-    // Create response with session cookie
-    const response = NextResponse.json({
+    // Set session cookie
+    await setSessionCookie(sessionInfo.session.session_token);
+
+    // Return success with curator info
+    return NextResponse.json({
       success: true,
-      username
+      curator: {
+        id: sessionInfo.curator.id,
+        username: sessionInfo.curator.username,
+        display_name: sessionInfo.curator.display_name
+      },
+      session_expires_at: sessionInfo.session.expires_at
     });
-
-    response.headers.set('Set-Cookie', createSessionCookie(sessionId));
-
-    return response;
 
   } catch (error) {
     console.error('Login API error:', error);

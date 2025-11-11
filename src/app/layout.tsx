@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import Navigation from "@/components/Navigation";
+import Header from "@/components/Header";
 
 export const metadata: Metadata = {
   title: "ECOD Curation",
@@ -15,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-gray-50 text-gray-900 min-h-screen" suppressHydrationWarning>
-        <Navigation />
+        <Header />
         {children}
       </body>
     </html>

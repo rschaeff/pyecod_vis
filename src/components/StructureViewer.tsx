@@ -19,6 +19,9 @@ interface StructureViewerProps {
   proteinId: string;
   domains: Domain[];
   editedBoundaries?: { [key: number]: EditedBoundary };
+  breakpoints?: number[];
+  isCollectingBreakpoints?: boolean;
+  onBreakpointClick?: (position: number) => void;
   width?: string;
   height?: string;
 }
@@ -39,6 +42,9 @@ export default function StructureViewer({
   proteinId,
   domains,
   editedBoundaries = {},
+  breakpoints = [],
+  isCollectingBreakpoints = false,
+  onBreakpointClick,
   width = '100%',
   height = '500px'
 }: StructureViewerProps) {
@@ -48,6 +54,16 @@ export default function StructureViewer({
   const [viewer, setViewer] = useState<any>(null);
   const [residueMappings, setResidueMappings] = useState<Map<number, number>>(new Map());
   const [hasMappings, setHasMappings] = useState(false);
+
+  // Use refs to track current state for callbacks
+  const isCollectingRef = useRef(isCollectingBreakpoints);
+  const onBreakpointClickRef = useRef(onBreakpointClick);
+
+  // Update refs when props change
+  useEffect(() => {
+    isCollectingRef.current = isCollectingBreakpoints;
+    onBreakpointClickRef.current = onBreakpointClick;
+  }, [isCollectingBreakpoints, onBreakpointClick]);
 
   // Callback ref - called when element is attached to DOM
   const viewerRef = useCallback((element: HTMLDivElement | null) => {
@@ -154,13 +170,23 @@ export default function StructureViewer({
           throw new Error('No atoms loaded from structure file');
         }
 
-        // Extract chain from proteinId (e.g., "8yl2_F" -> "F")
-        const chainId = proteinId.split('_')[1];
-        console.log(`[StructureViewer] Target chain: ${chainId}`);
+        // Extract chain from proteinId (e.g., "8yl2_F" -> "F", "8ckb_B001" -> "B001")
+        const originalChainId = proteinId.split('_')[1];
 
         // Check what chains are present
         const chains = new Set(allAtoms.map((a: any) => a.chain));
         console.log(`[StructureViewer] Chains in structure: ${Array.from(chains).join(', ')}`);
+
+        // Determine which chain ID to use:
+        // - If original chain exists in structure, use it (full CIF files)
+        // - Otherwise use "A" (chain-specific PDB files where chain is renamed)
+        let chainId = originalChainId;
+        if (!chains.has(originalChainId) && chains.has('A')) {
+          chainId = 'A';
+          console.log(`[StructureViewer] Chain ${originalChainId} not found, using 'A' instead (chain-specific file)`);
+        } else {
+          console.log(`[StructureViewer] Using chain ${chainId}`);
+        }
 
         // Check if we have the target chain
         const chainAtoms = viewerInstance.selectedAtoms({ chain: chainId });
@@ -227,11 +253,77 @@ export default function StructureViewer({
 
         // Add hover labels to show residue information
         console.log('[StructureViewer] Adding hover labels...');
-        viewerInstance.setHoverable({}, true, (atom: any) => {
-          if (!atom) return '';
-          // Show: residue name, chain, and residue number
-          return `${atom.resn} ${atom.chain}:${atom.resi}`;
+        viewerInstance.setHoverable({}, true,
+          (atom: any) => {
+            // Hover callback
+            if (!atom) return '';
+            // Show: residue name, chain, and residue number
+            return `${atom.resn} ${atom.chain}:${atom.resi}`;
+          },
+          () => {
+            // Unhover callback - called when hover ends
+            // Return empty string or nothing to clear the label
+          }
+        );
+
+        // Add click handler for breakpoint collection on target chain only
+        console.log('[StructureViewer] Adding click handler...');
+        const clickSelection = { chain: chainId };
+        viewerInstance.setClickable(clickSelection, true, (atom: any) => {
+          console.log(`[StructureViewer] Clicked atom:`, atom);
+          if (!atom) {
+            console.log('[StructureViewer] No atom clicked');
+            return;
+          }
+
+          console.log(`[StructureViewer] Clicked ${atom.resn} ${atom.chain}:${atom.resi}, collecting=${isCollectingRef.current}`);
+
+          // Only handle clicks when in breakpoint collection mode
+          // Use refs to get current state values
+          if (isCollectingRef.current && onBreakpointClickRef.current) {
+            const position = atom.resi;
+            console.log(`[StructureViewer] Reporting breakpoint at position ${position}`);
+            onBreakpointClickRef.current(position);
+          } else {
+            console.log('[StructureViewer] Not in collection mode or no handler');
+          }
         });
+
+        // Add breakpoint markers
+        if (breakpoints.length > 0) {
+          console.log(`[StructureViewer] Adding ${breakpoints.length} breakpoint markers...`);
+          breakpoints.forEach((seqidPos) => {
+            // Convert SEQID to PDB position if mappings available
+            let pdbPos = seqidPos;
+            if (hasMappings && residueMappings.size > 0) {
+              const mapped = residueMappings.get(seqidPos);
+              if (mapped !== undefined) {
+                pdbPos = mapped;
+                console.log(`  Breakpoint at SEQID ${seqidPos} → PDB ${pdbPos}`);
+              } else {
+                console.warn(`  No mapping for breakpoint ${seqidPos}, using SEQID`);
+              }
+            }
+
+            // Add sphere at C-alpha position
+            const selection = { chain: chainId, resi: pdbPos, atom: 'CA' };
+            viewerInstance.addSphere({
+              center: selection,
+              radius: 2.0,
+              color: 'red',
+              alpha: 0.8
+            });
+
+            // Add label
+            viewerInstance.addLabel(`${seqidPos}`, {
+              position: selection,
+              backgroundColor: 'red',
+              fontColor: 'white',
+              fontSize: 10,
+              backgroundOpacity: 0.8
+            });
+          });
+        }
 
         // Render and zoom to fit
         console.log('[StructureViewer] Rendering...');
@@ -256,7 +348,7 @@ export default function StructureViewer({
     return () => {
       isMounted = false;
     };
-  }, [proteinId, domains, viewerElement, hasMappings, residueMappings, editedBoundaries]);
+  }, [proteinId, domains, viewerElement, hasMappings, residueMappings, editedBoundaries, breakpoints]);
 
   return (
     <div className="relative">

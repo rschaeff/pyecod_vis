@@ -35,6 +35,13 @@ export default function Navigation() {
               </Link>
 
               <Link
+                href="/validation"
+                className={`${isActive('/validation')} px-4 py-2 rounded transition-colors`}
+              >
+                Validation
+              </Link>
+
+              <Link
                 href="/stats"
                 className={`${isActive('/stats')} px-4 py-2 rounded transition-colors`}
               >

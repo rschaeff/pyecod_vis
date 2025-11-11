@@ -1287,6 +1287,361 @@ Cache-Control: public, max-age=604800  // 7 days
 - Conserved residue highlighting
 - Active site detection
 
+### 11. Discontinuous Domain Range Support
+
+**Problem:**
+Currently, the system assumes domains are continuous sequences (e.g., "1-167"). However, some protein domains are **discontinuous** - composed of multiple non-contiguous sequence segments that fold together.
+
+**Examples:**
+- Immunoglobulin domains: "5-55,110-150" (two segments)
+- Protease domains with inserted regions: "1-100,250-350" (catalytic domain interrupted by insertion)
+- Circular permutations: "150-300,1-50" (domain wraps around)
+
+**Impact Areas:**
+
+#### A. Database Schema Changes
+
+**Current:**
+```sql
+domain_assignment (
+  start_pos INTEGER,
+  end_pos INTEGER,
+  residue_range TEXT  -- "1-167"
+)
+```
+
+**Proposed:**
+```sql
+domain_assignment (
+  start_pos INTEGER,      -- First segment start (for sorting)
+  end_pos INTEGER,        -- Last segment end (for sorting)
+  residue_range TEXT,     -- "1-50,100-150" (multi-segment format)
+  is_discontinuous BOOLEAN DEFAULT FALSE,
+  segment_count INTEGER DEFAULT 1
+)
+
+-- New table for detailed segment tracking
+domain_segments (
+  id SERIAL PRIMARY KEY,
+  domain_id INTEGER REFERENCES domain_assignment(id),
+  segment_number INTEGER,  -- 1, 2, 3...
+  start_pos INTEGER,
+  end_pos INTEGER,
+  length INTEGER GENERATED ALWAYS AS (end_pos - start_pos + 1) STORED,
+  UNIQUE(domain_id, segment_number)
+)
+```
+
+#### B. UI Changes
+
+**Domain Table Display:**
+```
+Current:
+┌───┬─────────┬───────────┬───────────┐
+│ # │ Range   │ Class     │ Conf      │
+├───┼─────────┼───────────┼───────────┤
+│ 1 │ 1-167   │ T:2004.1.1│ 98%       │
+└───┴─────────┴───────────┴───────────┘
+
+Proposed:
+┌───┬──────────────────┬───────────┬───────────┐
+│ # │ Range            │ Class     │ Conf      │
+├───┼──────────────────┼───────────┼───────────┤
+│ 1 │ 1-50, 100-150 🔗 │ T:2004.1.1│ 98%       │
+│   │ (2 segments)     │           │           │
+└───┴──────────────────┴───────────┴───────────┘
+
+Legend: 🔗 = Discontinuous domain
+```
+
+**Boundary Editing Interface:**
+```
+Current:
+[Start: 1] - [End: 167]
+
+Proposed:
+Domain Type: ( ) Continuous  (•) Discontinuous
+
+Segment 1: [Start: 1  ] - [End: 50  ]
+Segment 2: [Start: 100] - [End: 150] [× Remove]
+           [+ Add Segment]
+
+Total coverage: 101 residues (2 segments)
+```
+
+#### C. Structure Viewer Coloring
+
+**Current:**
+```javascript
+// Color single range
+viewer.setStyle(
+  { chain: chainId, resi: `${domain.start_pos}-${domain.end_pos}` },
+  { cartoon: { color: domainColor } }
+);
+```
+
+**Proposed:**
+```javascript
+// Parse multi-segment ranges
+function parseResidueRange(residueRange) {
+  // "1-50,100-150" -> [{start: 1, end: 50}, {start: 100, end: 150}]
+  return residueRange.split(',').map(segment => {
+    const [start, end] = segment.trim().split('-').map(Number);
+    return { start, end };
+  });
+}
+
+// Color each segment
+const segments = parseResidueRange(domain.residue_range);
+segments.forEach(segment => {
+  viewer.setStyle(
+    { chain: chainId, resi: `${segment.start}-${segment.end}` },
+    { cartoon: { color: domainColor } }
+  );
+});
+```
+
+#### D. Evidence Range Parsing
+
+**Challenge:** BLAST/HHsearch hits may also have discontinuous ranges
+
+**Current:**
+```sql
+domain_evidence (
+  query_range TEXT,  -- "2-167"
+  hit_range TEXT     -- "8-176"
+)
+```
+
+**Handle discontinuous evidence:**
+```
+Query: 1-50,100-150
+Hit:   8-58,110-160
+
+Need to:
+1. Parse multi-segment ranges
+2. Calculate coverage for each segment
+3. Validate alignment makes sense
+```
+
+#### E. Validation Logic
+
+**New checks needed:**
+
+```python
+def validate_discontinuous_domain(segments):
+    """Validate discontinuous domain makes sense"""
+    errors = []
+
+    # Check segments don't overlap
+    for i, seg1 in enumerate(segments):
+        for seg2 in segments[i+1:]:
+            if ranges_overlap(seg1, seg2):
+                errors.append(f"Segments {seg1} and {seg2} overlap")
+
+    # Check segments are ordered
+    if not is_sorted([seg.start for seg in segments]):
+        errors.append("Segments not in sequence order")
+
+    # Check gap sizes (warn if very large)
+    for i in range(len(segments) - 1):
+        gap = segments[i+1].start - segments[i].end - 1
+        if gap > 200:
+            errors.append(f"Large gap ({gap} residues) between segments")
+
+    # Check biological plausibility
+    total_length = sum(seg.length for seg in segments)
+    if total_length < 30:
+        errors.append("Total domain length very short for discontinuous domain")
+
+    return errors
+```
+
+#### F. Curation Workflow
+
+**New decision points:**
+
+```
+Is this domain discontinuous?
+
+( ) No - single continuous range (default)
+( ) Yes - multiple segments
+
+If yes:
+  How many segments? [2]
+
+  Why is it discontinuous?
+  ( ) Domain interrupted by insertion/linker
+  ( ) Circular permutation
+  ( ) Trans-splicing
+  ( ) Other: ___________
+
+  Confidence in discontinuity:
+  ( ) High - clear from structure/alignment
+  ( ) Medium - likely but not certain
+  ( ) Low - uncertain, flag for expert review
+```
+
+#### G. Common Use Cases
+
+**Case 1: Insertion/Deletion in Domain**
+```
+Full chain: 1-300
+Domain 1: 1-100,200-300 (discontinuous)
+  - Core domain: 1-100, 200-300
+  - Insertion: 101-199 (assigned to different domain or disordered)
+
+Visualization:
+Sequence:  [===Domain 1===][Insertion][===Domain 1===]
+           1              100        200            300
+```
+
+**Case 2: Circular Permutation**
+```
+Canonical order: A-B-C
+Permuted order:  B-C-A
+
+Domain range: "150-300,1-50"
+  - C-terminus of sequence (150-300) aligns to N-terminus of canonical domain
+  - N-terminus of sequence (1-50) aligns to C-terminus of canonical domain
+```
+
+**Case 3: Domain Swapping**
+```
+Homodimer where N-terminus of chain A forms domain with C-terminus of chain B
+
+Chain A domain: "1-50,B:200-250" (trans-chain, even more complex!)
+Note: Trans-chain discontinuity is VERY rare, defer to Phase 2
+```
+
+#### H. Implementation Phases
+
+**Phase 1: Basic Support (Required for v1.0)**
+- ✓ Update database schema
+- ✓ Parse discontinuous ranges in viewer
+- ✓ Display multi-segment ranges in UI
+- ✓ Basic validation (no overlaps)
+
+**Phase 2: Editing Support**
+- ✓ UI for adding/removing segments
+- ✓ Visual feedback in structure viewer
+- ✓ Segment-by-segment alignment validation
+- ✓ Auto-detect discontinuity from evidence
+
+**Phase 3: Advanced Features**
+- ✓ Circular permutation detection
+- ✓ Domain insertion/linker analysis
+- ✓ Confidence scoring for discontinuity
+- ✓ Trans-chain domains (very rare, low priority)
+
+#### I. Example Data
+
+**Test cases to support:**
+
+```sql
+-- Simple continuous (current)
+INSERT INTO domain_assignment (residue_range, is_discontinuous)
+VALUES ('1-167', FALSE);
+
+-- Two-segment discontinuous
+INSERT INTO domain_assignment (residue_range, is_discontinuous, segment_count)
+VALUES ('1-50,100-150', TRUE, 2);
+
+INSERT INTO domain_segments (domain_id, segment_number, start_pos, end_pos)
+VALUES
+  (domain_id, 1, 1, 50),
+  (domain_id, 2, 100, 150);
+
+-- Three-segment (rare but valid)
+INSERT INTO domain_assignment (residue_range, is_discontinuous, segment_count)
+VALUES ('10-40,80-120,200-250', TRUE, 3);
+
+-- Circular permutation
+INSERT INTO domain_assignment (residue_range, is_discontinuous, segment_count)
+VALUES ('150-300,1-50', TRUE, 2);
+```
+
+#### J. UI Mockup: Discontinuous Domain Editing
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Domain 1 Boundaries                                      │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│ Type: (•) Continuous  ( ) Discontinuous                 │
+│                                                          │
+│ Range: [1   ] - [167 ]                                  │
+│                                                          │
+│ [Preview in Structure]                                  │
+└─────────────────────────────────────────────────────────┘
+
+When "Discontinuous" is selected:
+
+┌─────────────────────────────────────────────────────────┐
+│ Domain 1 Boundaries                                      │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│ Type: ( ) Continuous  (•) Discontinuous                 │
+│                                                          │
+│ Segment 1: [1   ] - [50  ] (50 aa)  [Preview] [Remove] │
+│ Segment 2: [100 ] - [150 ] (51 aa)  [Preview] [Remove] │
+│                                                          │
+│ [+ Add Segment]                                          │
+│                                                          │
+│ Total: 101 residues in 2 segments                       │
+│ Gaps: 49 residues (101-99)                              │
+│                                                          │
+│ Validation:                                              │
+│ ✓ No overlaps                                           │
+│ ✓ Segments in order                                     │
+│ ⚠ Gap is large (49aa) - is this correct?               │
+│                                                          │
+│ [Preview All Segments in Structure]                     │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### K. Technical Considerations
+
+**Performance:**
+- Parsing "1-50,100-150" vs "1-167": negligible difference
+- Coloring multiple segments in 3Dmol.js: tested, works fine
+- Database queries: need index on `is_discontinuous` for filtering
+
+**Backwards Compatibility:**
+- Continuous domains: `is_discontinuous = FALSE`, single segment
+- Existing data: migration script to populate `domain_segments` table
+- Old code reading `residue_range`: still works (just more segments)
+
+**Edge Cases:**
+- Empty gaps (e.g., "1-50,51-100"): treat as continuous "1-100"
+- Single-residue segments (e.g., "1-50,55-55,100-150"): allow but warn
+- Reverse-order segments (circular permutation): special handling needed
+- Overlapping segments: reject as invalid
+
+#### L. Priority Assessment
+
+**Urgency: MEDIUM-HIGH**
+
+**Why implement:**
+- Real biological phenomenon (not edge case)
+- ~5-10% of domains may be discontinuous
+- Incorrect handling leads to wrong classifications
+- Blocks accurate curation of certain domain types
+
+**Why defer:**
+- Most domains (90%+) are continuous
+- Complex UI changes required
+- Can manually note discontinuity in comments (workaround)
+
+**Recommendation:**
+- Implement **Phase 1** (basic support) in v1.0
+  - Allow viewing discontinuous ranges
+  - Parse and display correctly
+  - ~3-5 days development
+- Defer **Phase 2** (editing support) to v1.1
+  - Full UI for creating/editing discontinuous domains
+  - ~1-2 weeks development
+
 ## Next Steps
 
 1. **Get feedback on these proposals**
@@ -1295,5 +1650,7 @@ Cache-Control: public, max-age=604800  // 7 days
    - Clustering data
    - Unclassified regions calculation
    - Experimental metadata from PDB
+   - Discontinuous domain segment handling
 4. **Redesign queue component**
 5. **Add decision helper to protein view**
+6. **Design discontinuous domain editing interface**

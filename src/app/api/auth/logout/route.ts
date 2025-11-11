@@ -1,28 +1,26 @@
 /**
  * POST /api/auth/logout
  *
- * Destroy session and logout user
+ * Destroy session and clear cookie
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getSessionFromCookie, destroySession, createLogoutCookie } from '@/lib/auth';
+import { getCurrentSession, deleteSession, clearSessionCookie } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
-    const sessionId = getSessionFromCookie(request.headers.get('cookie'));
+    const sessionInfo = await getCurrentSession();
 
-    if (sessionId) {
-      destroySession(sessionId);
+    if (sessionInfo) {
+      await deleteSession(sessionInfo.session.session_token);
     }
 
-    // Create response with expired session cookie
-    const response = NextResponse.json({
+    // Clear cookie
+    await clearSessionCookie();
+
+    return NextResponse.json({
       success: true
     });
-
-    response.headers.set('Set-Cookie', createLogoutCookie());
-
-    return response;
 
   } catch (error) {
     console.error('Logout API error:', error);

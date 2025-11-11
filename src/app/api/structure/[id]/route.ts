@@ -88,14 +88,26 @@ export async function GET(
           const resolvedPath = stdout.trim();
 
           if (resolvedPath) {
-            foundPath = resolvedPath;
-            break;
+            // Check if file is not empty
+            const stats = await fs.stat(resolvedPath);
+            if (stats.size > 0) {
+              foundPath = resolvedPath;
+              break;
+            } else {
+              console.log(`Skipping empty file: ${resolvedPath}`);
+            }
           }
         } else {
           // Direct path check
           await fs.access(pathPattern);
-          foundPath = pathPattern;
-          break;
+          // Check if file is not empty
+          const stats = await fs.stat(pathPattern);
+          if (stats.size > 0) {
+            foundPath = pathPattern;
+            break;
+          } else {
+            console.log(`Skipping empty file: ${pathPattern}`);
+          }
         }
       } catch {
         // Continue to next path

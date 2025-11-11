@@ -6,6 +6,7 @@
  * Query params:
  *   - show_all: true/false (default: false) - show all chains or just cluster representatives
  *   - limit: number (default: 100) - max proteins to return
+ *   - single_char_only: true/false (default: false) - exclude multi-character chain IDs
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -15,15 +16,20 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const showAll = searchParams.get('show_all') === 'true';
+    const singleCharOnly = searchParams.get('single_char_only') === 'true';
     const limit = parseInt(searchParams.get('limit') || '100');
 
     let sql: string;
+
+    // Build chain filter
+    const chainFilter = singleCharOnly ? "AND LENGTH(p.chain_id) = 1" : "";
 
     if (showAll) {
       // Show all proteins (including cluster members)
       sql = `
         SELECT
           p.source_id,
+          p.chain_id,
           p.sequence_length,
           p.domain_count,
           p.partition_coverage,
@@ -40,6 +46,7 @@ export async function GET(request: NextRequest) {
         FROM ecod_curation.protein p
         LEFT JOIN ecod_curation.cluster_membership cm ON p.id = cm.protein_id
         WHERE p.curation_status = 'pending'
+          ${chainFilter}
         ORDER BY
           p.processed_at DESC
         LIMIT $1
@@ -49,6 +56,7 @@ export async function GET(request: NextRequest) {
       sql = `
         SELECT
           p.source_id,
+          p.chain_id,
           p.sequence_length,
           p.domain_count,
           p.partition_coverage,
@@ -69,6 +77,7 @@ export async function GET(request: NextRequest) {
         LEFT JOIN ecod_curation.cluster_membership cm ON p.id = cm.protein_id
         WHERE p.curation_status = 'pending'
           AND (cm.is_representative = true OR cm.is_representative IS NULL)
+          ${chainFilter}
         ORDER BY
           p.processed_at DESC
         LIMIT $1

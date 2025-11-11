@@ -23,6 +23,8 @@ export async function GET(
         p.chain_id,
         p.sequence_length,
         p.pdb_title,
+        p.entity_description,
+        p.entity_id,
         p.pdb_deposition_date,
         p.pdb_release_date,
         p.experimental_method,

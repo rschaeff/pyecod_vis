@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   try {
     const body: CurationDecision = await request.json();
 
-    const { protein_id, curator, decision, domains, notes } = body;
+    const { protein_id, curator, decision, domains, notes, breakpoints } = body;
 
     // Validate required fields
     if (!protein_id || !curator || !decision || !domains) {
@@ -31,19 +31,22 @@ export async function POST(request: NextRequest) {
     // 1. Update each domain with curator decisions
     for (const domain of domains) {
       // Update domain boundaries if modified
+      const residueRange = `${domain.start_pos}-${domain.end_pos}`;
+
       await client.query(`
         UPDATE ecod_curation.domain_assignment
         SET
           start_pos = $1,
           end_pos = $2,
-          residue_range = $1 || '-' || $2,
-          curator_decision = $3,
-          curator_name = $4,
+          residue_range = $3,
+          curator_decision = $4,
+          curator_name = $5,
           curated_at = NOW()
-        WHERE id = $5
+        WHERE id = $6
       `, [
         domain.start_pos,
         domain.end_pos,
+        residueRange,
         domain.curator_decision,
         curator,
         domain.domain_id
@@ -85,13 +88,14 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Update protein curation status
-    let curationStatus: 'curated' | 'rejected' | 'needs_review';
+    let curationStatus: 'curated' | 'rejected';
     if (decision === 'approved') {
       curationStatus = 'curated';
     } else if (decision === 'rejected') {
       curationStatus = 'rejected';
     } else {
-      curationStatus = 'needs_review';
+      // needs_review - mark as curated but flagged_for_expert in log
+      curationStatus = 'curated';
     }
 
     await client.query(`
@@ -103,18 +107,41 @@ export async function POST(request: NextRequest) {
     `, [curationStatus, protein_id]);
 
     // 3. Record in curation decision log
+    // Determine which boolean flags to set
+    const hasModifiedDomains = domains.some(d => d.curator_decision === 'modified');
+
+    // Combine notes with breakpoints metadata
+    let finalNotes = notes || '';
+    if (breakpoints && breakpoints.length > 0) {
+      const breakpointData = {
+        breakpoints: breakpoints,
+        note: finalNotes
+      };
+      finalNotes = JSON.stringify(breakpointData);
+    }
+
     await client.query(`
       INSERT INTO ecod_curation.curation_decision_log
-      (protein_id, decision, curator_name, curator_notes, decision_timestamp)
-      VALUES ($1, $2, $3, $4, NOW())
-    `, [protein_id, decision, curator, notes]);
+      (protein_id, domains_accepted, domains_modified, domains_rejected,
+       flagged_for_expert, notes)
+      VALUES ($1, $2, $3, $4, $5, $6)
+    `, [
+      protein_id,
+      decision === 'approved', // domains_accepted
+      hasModifiedDomains,      // domains_modified
+      decision === 'rejected', // domains_rejected
+      decision === 'needs_review', // flagged_for_expert
+      finalNotes
+    ]);
 
     // 4. Get next protein in queue (if any)
+    // Prioritize single-character chain IDs for better visualization support
     const nextProteinResult = await client.query(`
       SELECT p.source_id
       FROM ecod_curation.protein p
       LEFT JOIN ecod_curation.curation_queue q ON p.id = q.protein_id
       WHERE p.curation_status = 'pending'
+        AND LENGTH(p.chain_id) = 1
       ORDER BY COALESCE(q.priority, 5) DESC, p.id
       LIMIT 1
     `);

@@ -5,22 +5,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getSessionFromCookie, validateSession } from '@/lib/auth';
+import { getCurrentSession } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
   try {
-    const sessionId = getSessionFromCookie(request.headers.get('cookie'));
+    const sessionInfo = await getCurrentSession();
 
-    if (!sessionId) {
-      return NextResponse.json(
-        { authenticated: false },
-        { status: 401 }
-      );
-    }
-
-    const username = validateSession(sessionId);
-
-    if (!username) {
+    if (!sessionInfo) {
       return NextResponse.json(
         { authenticated: false },
         { status: 401 }
@@ -29,7 +20,16 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       authenticated: true,
-      username
+      curator: {
+        id: sessionInfo.curator.id,
+        username: sessionInfo.curator.username,
+        display_name: sessionInfo.curator.display_name,
+        email: sessionInfo.curator.email
+      },
+      session: {
+        expires_at: sessionInfo.session.expires_at,
+        last_activity: sessionInfo.session.last_activity
+      }
     });
 
   } catch (error) {
