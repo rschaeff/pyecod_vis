@@ -82,7 +82,19 @@ export default function Header() {
                   href="/validation"
                   className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded transition-colors"
                 >
-                  Validation
+                  Rep Validation
+                </Link>
+                <Link
+                  href="/clustering-validation"
+                  className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded transition-colors"
+                >
+                  Clustering Validation
+                </Link>
+                <Link
+                  href="/stats"
+                  className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded transition-colors"
+                >
+                  Statistics
                 </Link>
               </nav>
             </div>

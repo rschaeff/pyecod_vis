@@ -38,7 +38,14 @@ export default function Navigation() {
                 href="/validation"
                 className={`${isActive('/validation')} px-4 py-2 rounded transition-colors`}
               >
-                Validation
+                Rep Validation
+              </Link>
+
+              <Link
+                href="/clustering-validation"
+                className={`${isActive('/clustering-validation')} px-4 py-2 rounded transition-colors`}
+              >
+                Clustering Validation
               </Link>
 
               <Link
