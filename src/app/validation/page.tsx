@@ -274,6 +274,7 @@ export default function ValidationPage() {
   const [pageSize, setPageSize] = useState(25);
   const [expandedAlignments, setExpandedAlignments] = useState<Set<number>>(new Set());
   const [expandedCuration, setExpandedCuration] = useState<Set<number>>(new Set());
+  const [quickSaving, setQuickSaving] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     fetchIssues();
@@ -408,6 +409,45 @@ export default function ValidationPage() {
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to save curation');
       console.error('Error saving curation:', err);
+    }
+  };
+
+  const handleQuickReclassifyBoth = async (issue: ValidationIssue) => {
+    // Add to quick saving set
+    setQuickSaving(prev => new Set(prev).add(issue.id));
+
+    try {
+      const response = await fetch('/api/validation/curate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          domain1_uid: issue.domain1_ecod_uid,
+          domain2_uid: issue.domain2_ecod_uid,
+          issue_type: 'cross_boundary',
+          status: 'flagged',
+          action: 'reclassify_both',
+          notes: null,
+          priority: 0,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to save curation');
+      }
+
+      // Refresh issues after successful save
+      await fetchIssues();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to save curation');
+      console.error('Error saving curation:', err);
+    } finally {
+      // Remove from quick saving set
+      setQuickSaving(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(issue.id);
+        return newSet;
+      });
     }
   };
 
@@ -610,6 +650,26 @@ export default function ValidationPage() {
                     <span className={`px-3 py-1 rounded-full text-xs font-medium ${getBoundaryColor(issue.boundary_type)}`}>
                       {getBoundaryLabel(issue.boundary_type)}
                     </span>
+                    {!issue.curation_status && (
+                      <button
+                        onClick={() => handleQuickReclassifyBoth(issue)}
+                        disabled={quickSaving.has(issue.id)}
+                        className="px-3 py-1 bg-purple-600 text-white rounded-full text-xs font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                        title="Flag and mark for reclassification of both domains"
+                      >
+                        {quickSaving.has(issue.id) ? (
+                          <>
+                            <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                            <span>Saving...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>⚡</span>
+                            <span>Reclassify Both</span>
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
                   <div className="text-right">
                     <div className="text-2xl font-bold text-blue-600">{Number(issue.sequence_identity).toFixed(1)}%</div>
@@ -740,7 +800,7 @@ export default function ValidationPage() {
                         </div>
                         <div className="mb-2 break-all whitespace-pre-wrap text-green-700">
                           {issue.query_aligned.split('').map((q, i) =>
-                            q === issue.target_aligned[i] ? '|' : ' '
+                            q === issue.target_aligned![i] ? '|' : ' '
                           ).join('')}
                         </div>
 
@@ -751,7 +811,7 @@ export default function ValidationPage() {
 
                         <div className="mt-3 text-gray-600 font-sans text-xs">
                           {(() => {
-                            const matches = issue.query_aligned.split('').filter((q, i) => q === issue.target_aligned[i]).length;
+                            const matches = issue.query_aligned.split('').filter((q, i) => q === issue.target_aligned![i]).length;
                             const identity = (matches / issue.alignment_length * 100).toFixed(1);
                             return `Identical residues: ${matches}/${issue.alignment_length} (${identity}%)`;
                           })()}

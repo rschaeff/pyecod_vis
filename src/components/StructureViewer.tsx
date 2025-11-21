@@ -122,6 +122,7 @@ export default function StructureViewer({
         console.log('[StructureViewer] Element ready:', viewerElement);
 
         // Import 3Dmol
+        // @ts-ignore - 3dmol types not available
         const module = await import('3dmol/build/3Dmol.js');
         $3Dmol = (module as any).default || module;
         console.log('[StructureViewer] 3Dmol.js loaded');

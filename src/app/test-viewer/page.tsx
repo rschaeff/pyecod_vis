@@ -18,6 +18,7 @@ export default function TestViewerPage() {
 
       // Test 1: Load 3Dmol
       addLog('Loading 3Dmol.js...');
+      // @ts-ignore - 3dmol types not available
       const module = await import('3dmol/build/3Dmol.js');
       const $3Dmol = (module as any).default || module;
       addLog('✓ 3Dmol.js loaded successfully');

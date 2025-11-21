@@ -48,8 +48,9 @@ export default function Header() {
     }
   };
 
-  const handleLoginSuccess = (curatorData: Curator) => {
-    setCurator(curatorData);
+  const handleLoginSuccess = (curatorData: { id: number; username: string; display_name: string }) => {
+    // LoginModal returns a subset of Curator fields, set email to null
+    setCurator({ ...curatorData, email: null });
     setShowLoginModal(false);
   };
 

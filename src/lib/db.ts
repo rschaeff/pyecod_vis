@@ -5,7 +5,7 @@
  * Used by all API routes for querying ecod_curation schema
  */
 
-import { Pool, QueryResult } from 'pg';
+import { Pool, QueryResult, QueryResultRow } from 'pg';
 
 // Database configuration
 const dbConfig = {
@@ -50,7 +50,7 @@ export function getPool(): Pool {
  * @param params - Query parameters
  * @returns Query result
  */
-export async function query<T = any>(
+export async function query<T extends QueryResultRow = any>(
   text: string,
   params?: any[]
 ): Promise<QueryResult<T>> {

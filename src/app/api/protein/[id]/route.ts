@@ -12,15 +12,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { Protein, Domain, Evidence, ClusterMember } from '@/lib/types';
 
-interface RouteParams {
-  params: {
-    id: string;
-  };
-}
-
 export async function GET(
   request: NextRequest,
-  { params }: RouteParams
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
