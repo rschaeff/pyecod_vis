@@ -270,6 +270,7 @@ export default function ValidationPage() {
   const [coverageFilter, setCoverageFilter] = useState('all');
   const [curationStatus, setCurationStatus] = useState('uncurated');
   const [sortBy, setSortBy] = useState('default');
+  const [domainIdFilter, setDomainIdFilter] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [expandedAlignments, setExpandedAlignments] = useState<Set<number>>(new Set());
@@ -278,7 +279,7 @@ export default function ValidationPage() {
 
   useEffect(() => {
     fetchIssues();
-  }, [severity, boundaryType, pairType, coverageFilter, curationStatus, sortBy, page, pageSize]);
+  }, [severity, boundaryType, pairType, coverageFilter, curationStatus, sortBy, domainIdFilter, page, pageSize]);
 
   // Auto-expand first issue's curation panel
   useEffect(() => {
@@ -299,6 +300,7 @@ export default function ValidationPage() {
       if (coverageFilter !== 'all') params.append('coverage_filter', coverageFilter);
       if (curationStatus !== 'all') params.append('curation_status', curationStatus);
       if (sortBy !== 'default') params.append('sort_by', sortBy);
+      if (domainIdFilter.trim()) params.append('domain_id', domainIdFilter.trim());
       params.append('page', String(page));
       params.append('page_size', String(pageSize));
 
@@ -512,6 +514,17 @@ export default function ValidationPage() {
       {/* Filters */}
       <div className="bg-white p-3 rounded border mb-3">
         <div className="flex gap-3 flex-wrap">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Domain ID</label>
+            <input
+              type="text"
+              value={domainIdFilter}
+              onChange={(e) => { setDomainIdFilter(e.target.value); setPage(1); }}
+              placeholder="e.g., e8h0hA1"
+              className="border border-gray-300 rounded-md px-3 py-2 w-40"
+            />
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Severity</label>
             <select

@@ -17,6 +17,7 @@ export async function GET(request: NextRequest) {
     const coverageFilter = searchParams.get('coverage_filter') || 'all';
     const curationStatus = searchParams.get('curation_status') || 'uncurated'; // Default: show only uncurated
     const sortBy = searchParams.get('sort_by') || 'default';
+    const domainId = searchParams.get('domain_id') || '';
     const page = parseInt(searchParams.get('page') || '1');
     const pageSize = parseInt(searchParams.get('page_size') || '25');
 
@@ -138,6 +139,12 @@ export async function GET(request: NextRequest) {
       sql += ` AND vc.curation_status = $${params.length}`;
     }
 
+    // Filter by domain ID (match either domain1 or domain2)
+    if (domainId.trim()) {
+      params.push(`%${domainId.trim()}%`);
+      sql += ` AND (cb.domain1_ecod_id ILIKE $${params.length} OR cb.domain2_ecod_id ILIKE $${params.length})`;
+    }
+
     // Order by sorting preference
     if (sortBy === 'total_nonreps') {
       sql += `
@@ -216,6 +223,10 @@ export async function GET(request: NextRequest) {
     if (pairType !== 'all') {
       statsParams.push(pairType);
       statsSQL += ` AND cb.pair_type = $${statsParams.length}`;
+    }
+    if (domainId.trim()) {
+      statsParams.push(`%${domainId.trim()}%`);
+      statsSQL += ` AND (cb.domain1_ecod_id ILIKE $${statsParams.length} OR cb.domain2_ecod_id ILIKE $${statsParams.length})`;
     }
 
     const statsResult = await query(statsSQL, statsParams);
