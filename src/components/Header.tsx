@@ -92,6 +92,12 @@ export default function Header() {
                   Clustering Validation
                 </Link>
                 <Link
+                  href="/swissprot"
+                  className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded transition-colors"
+                >
+                  SwissProt Novel
+                </Link>
+                <Link
                   href="/stats"
                   className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded transition-colors"
                 >
