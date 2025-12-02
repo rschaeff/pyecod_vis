@@ -10,6 +10,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 
+interface SiblingDomain {
+  domain_id: string;
+  range: string;
+  judge: string;
+  t_group: string | null;
+  dpam_prob: number;
+  accession_status: string | null;
+}
+
 interface SwissProtProtein {
   id: number;
   source_id: string;
@@ -22,6 +31,8 @@ interface SwissProtProtein {
   hh_prob: number;
   assigned_t_group: string | null;
   t_group_name: string | null;
+  h_group_name: string | null;
+  x_group_name: string | null;
   cluster_id: number;
   cluster_size: number;
   curation_status: string;
@@ -29,6 +40,14 @@ interface SwissProtProtein {
   curator_name: string;
   curator_notes: string;
   curated_at: string;
+  // Protein context fields
+  protein_name: string | null;
+  gene_name: string | null;
+  organism: string | null;
+  total_sibling_count: number;
+  ecod_sibling_count: number;
+  has_ecod_siblings: boolean;
+  sibling_domains: SiblingDomain[] | null;
 }
 
 interface ClusterMember {
@@ -48,7 +67,8 @@ export async function GET(
     const { id } = await params;
     const sourceId = id;
 
-    // 1. Get protein details with T-group name
+    // 1. Get protein details with X/H/T group names and protein context
+    // T -> H -> X hierarchy via parent_id
     const proteinResult = await query<SwissProtProtein>(`
       SELECT
         sp.id,
@@ -62,15 +82,26 @@ export async function GET(
         sp.hh_prob,
         sp.assigned_t_group,
         tc.name as t_group_name,
+        hc.name as h_group_name,
+        xc.name as x_group_name,
         sp.cluster_id,
         sp.cluster_size,
         sp.curation_status,
         sp.curator_decision,
         sp.curator_name,
         sp.curator_notes,
-        sp.curated_at::text
+        sp.curated_at::text,
+        sp.protein_name,
+        sp.gene_name,
+        sp.organism,
+        COALESCE(sp.total_sibling_count, 0) as total_sibling_count,
+        COALESCE(sp.ecod_sibling_count, 0) as ecod_sibling_count,
+        COALESCE(sp.has_ecod_siblings, false) as has_ecod_siblings,
+        sp.sibling_domains
       FROM ecod_curation.swissprot_protein sp
       LEFT JOIN ecod_rep.cluster tc ON sp.assigned_t_group = tc.id AND tc.type = 'T'
+      LEFT JOIN ecod_rep.cluster hc ON tc.parent = hc.id AND hc.type = 'H'
+      LEFT JOIN ecod_rep.cluster xc ON hc.parent = xc.id AND xc.type = 'X'
       WHERE sp.source_id = $1
     `, [sourceId]);
 

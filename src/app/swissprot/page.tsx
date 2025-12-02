@@ -21,7 +21,16 @@ interface SwissProtProtein {
   hh_prob: number;
   assigned_t_group: string;
   t_group_name: string | null;
+  h_group_name: string | null;
+  x_group_name: string | null;
   priority: number;
+  // Protein context fields
+  protein_name: string | null;
+  gene_name: string | null;
+  organism: string | null;
+  total_sibling_count: number;
+  ecod_sibling_count: number;
+  has_ecod_siblings: boolean;
 }
 
 interface QueueStats {
@@ -42,12 +51,14 @@ export default function SwissProtQueuePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('all');
+  const [hasEcodSiblings, setHasEcodSiblings] = useState<string>('');
+  const [isMultidomain, setIsMultidomain] = useState<string>('');
   const [page, setPage] = useState(0);
   const [pageSize] = useState(50);
 
   useEffect(() => {
     fetchQueue();
-  }, [filter, page]);
+  }, [filter, hasEcodSiblings, isMultidomain, page]);
 
   const fetchQueue = async () => {
     setLoading(true);
@@ -56,6 +67,8 @@ export default function SwissProtQueuePage() {
     try {
       const params = new URLSearchParams();
       if (filter !== 'all') params.append('filter', filter);
+      if (hasEcodSiblings) params.append('has_ecod_siblings', hasEcodSiblings);
+      if (isMultidomain) params.append('is_multidomain', isMultidomain);
       params.append('limit', String(pageSize));
       params.append('offset', String(page * pageSize));
 
@@ -96,6 +109,33 @@ export default function SwissProtQueuePage() {
       return score < threshold ? 'text-green-600' : 'text-gray-600';
     }
     return score >= threshold ? 'text-green-600' : 'text-gray-600';
+  };
+
+  const getSiblingBadge = (protein: SwissProtProtein) => {
+    const { total_sibling_count, ecod_sibling_count, has_ecod_siblings } = protein;
+
+    if (total_sibling_count === 0) {
+      // Single domain protein
+      return (
+        <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
+          Single
+        </span>
+      );
+    } else if (has_ecod_siblings) {
+      // Has siblings with some in ECOD
+      return (
+        <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+          {ecod_sibling_count}/{total_sibling_count} ECOD
+        </span>
+      );
+    } else {
+      // Has siblings but none in ECOD
+      return (
+        <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-medium">
+          0/{total_sibling_count} ECOD
+        </span>
+      );
+    }
   };
 
   return (
@@ -167,19 +207,56 @@ export default function SwissProtQueuePage() {
 
       {/* Filters */}
       <div className="bg-white p-4 rounded-lg shadow border mb-6">
-        <div className="flex gap-4 items-center">
-          <label className="text-sm font-medium text-gray-700">Filter:</label>
-          <select
-            value={filter}
-            onChange={(e) => { setFilter(e.target.value); setPage(0); }}
-            className="border border-gray-300 rounded-md px-3 py-2"
-          >
-            <option value="all">All Pending</option>
-            <option value="high_priority">High Priority (&ge;10 members)</option>
-            <option value="medium_priority">Medium Priority (5-9 members)</option>
-            <option value="low_priority">Low Priority (1-4 members)</option>
-            <option value="large_clusters">Large Clusters (&ge;5 members)</option>
-          </select>
+        <div className="flex flex-wrap gap-4 items-center">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-700">Priority:</label>
+            <select
+              value={filter}
+              onChange={(e) => { setFilter(e.target.value); setPage(0); }}
+              className="border border-gray-300 rounded-md px-3 py-2"
+            >
+              <option value="all">All Pending</option>
+              <option value="high_priority">High Priority (&ge;10 members)</option>
+              <option value="medium_priority">Medium Priority (5-9 members)</option>
+              <option value="low_priority">Low Priority (1-4 members)</option>
+              <option value="large_clusters">Large Clusters (&ge;5 members)</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-700">Domain Type:</label>
+            <select
+              value={isMultidomain}
+              onChange={(e) => { setIsMultidomain(e.target.value); setPage(0); }}
+              className="border border-gray-300 rounded-md px-3 py-2"
+            >
+              <option value="">All</option>
+              <option value="false">Single Domain</option>
+              <option value="true">Multidomain</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-700">ECOD Siblings:</label>
+            <select
+              value={hasEcodSiblings}
+              onChange={(e) => { setHasEcodSiblings(e.target.value); setPage(0); }}
+              className="border border-gray-300 rounded-md px-3 py-2"
+            >
+              <option value="">All</option>
+              <option value="true">Has ECOD Siblings</option>
+              <option value="false">No ECOD Siblings</option>
+            </select>
+          </div>
+
+          {(filter !== 'all' || hasEcodSiblings || isMultidomain) && (
+            <button
+              onClick={() => { setFilter('all'); setHasEcodSiblings(''); setIsMultidomain(''); setPage(0); }}
+              className="text-sm text-blue-600 hover:text-blue-800"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
       </div>
 
@@ -209,10 +286,16 @@ export default function SwissProtQueuePage() {
                     Domain ID
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    UniProt
+                    Protein Name
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Gene
                   </th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Cluster Size
+                    Siblings
+                  </th>
+                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Cluster
                   </th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     pLDDT
@@ -246,17 +329,33 @@ export default function SwissProtQueuePage() {
                       >
                         {protein.source_id}
                       </Link>
+                      <div className="text-xs text-gray-500">
+                        <a
+                          href={`https://www.uniprot.org/uniprotkb/${protein.unp_acc}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hover:text-blue-600"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {protein.unp_acc}
+                        </a>
+                      </div>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <a
-                        href={`https://www.uniprot.org/uniprotkb/${protein.unp_acc}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:text-blue-800"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {protein.unp_acc}
-                      </a>
+                    <td className="px-4 py-3 max-w-48">
+                      <div className="truncate text-sm text-gray-900" title={protein.protein_name || ''}>
+                        {protein.protein_name || '-'}
+                      </div>
+                      {protein.organism && (
+                        <div className="text-xs text-gray-500 truncate" title={protein.organism}>
+                          {protein.organism}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                      {protein.gene_name || '-'}
+                    </td>
+                    <td className="px-4 py-3 text-center whitespace-nowrap">
+                      {getSiblingBadge(protein)}
                     </td>
                     <td className="px-4 py-3 text-center whitespace-nowrap">
                       <span className={`font-medium ${protein.cluster_size >= 10 ? 'text-red-600' : protein.cluster_size >= 5 ? 'text-yellow-600' : 'text-gray-600'}`}>
@@ -278,15 +377,15 @@ export default function SwissProtQueuePage() {
                         {Number(protein.hh_prob).toFixed(2)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-gray-600">
+                    <td className="px-4 py-3 text-gray-600 max-w-56">
                       {protein.assigned_t_group ? (
                         <div>
                           <div className="font-medium">{protein.assigned_t_group}</div>
-                          {protein.t_group_name && (
-                            <div className="text-xs text-gray-500 truncate max-w-40" title={protein.t_group_name}>
-                              {protein.t_group_name}
-                            </div>
-                          )}
+                          <div className="text-xs text-gray-500 truncate" title={[protein.x_group_name, protein.h_group_name, protein.t_group_name].filter(Boolean).join(' > ')}>
+                            {protein.x_group_name && <span>{protein.x_group_name}</span>}
+                            {protein.x_group_name && protein.t_group_name && <span className="text-gray-400"> &gt; </span>}
+                            {protein.t_group_name && <span>{protein.t_group_name}</span>}
+                          </div>
                         </div>
                       ) : '-'}
                     </td>

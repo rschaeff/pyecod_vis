@@ -34,6 +34,169 @@ interface ClusterMember {
   hh_prob: number;
 }
 
+interface SiblingDomain {
+  domain_id: string;
+  range: string;
+  judge: string;
+  t_group: string | null;
+  dpam_prob: number;
+  accession_status: string | null;
+}
+
+/**
+ * Domain Architecture Visualization Component
+ * Shows a linear representation of domains on a protein
+ */
+function DomainArchitecture({
+  currentDomain,
+  siblingDomains,
+}: {
+  currentDomain: {
+    domain_id: string;
+    range: string;
+    t_group: string | null;
+    dpam_prob: number;
+    accession_status: string | null;
+    judge: string;
+  };
+  siblingDomains: SiblingDomain[];
+}) {
+  // Combine current domain with siblings and sort by start position
+  const allDomains = [
+    { ...currentDomain, isCurrent: true },
+    ...siblingDomains.map(d => ({ ...d, isCurrent: false })),
+  ];
+
+  // Parse range strings to get start positions
+  const parseRangeStart = (range: string): number => {
+    if (!range) return 0;
+    const match = range.match(/^(\d+)/);
+    return match ? parseInt(match[1]) : 0;
+  };
+
+  const parseRangeEnd = (range: string): number => {
+    if (!range) return 0;
+    // Handle complex ranges like "26-100,150-200"
+    const parts = range.split(',');
+    const lastPart = parts[parts.length - 1];
+    const match = lastPart.match(/(\d+)$/);
+    return match ? parseInt(match[1]) : 0;
+  };
+
+  // Sort domains by start position
+  const sortedDomains = [...allDomains].sort((a, b) =>
+    parseRangeStart(a.range) - parseRangeStart(b.range)
+  );
+
+  // Calculate max position for scaling
+  const maxPos = Math.max(...sortedDomains.map(d => parseRangeEnd(d.range)), 100);
+
+  // Get color based on ECOD status
+  const getDomainColor = (domain: typeof allDomains[0]) => {
+    if (domain.isCurrent) return 'bg-red-500 border-red-600'; // Current candidate
+    if (domain.accession_status === 'approved') return 'bg-green-500 border-green-600';
+    if (domain.accession_status === 'pending' || domain.accession_status === 'deferred') return 'bg-orange-400 border-orange-500';
+    return 'bg-gray-400 border-gray-500'; // Not in ECOD
+  };
+
+  const getDomainLabel = (domain: typeof allDomains[0]) => {
+    if (domain.isCurrent) return 'candidate';
+    if (domain.accession_status === 'approved') return 'in ECOD';
+    if (domain.accession_status === 'pending' || domain.accession_status === 'deferred') return 'staging';
+    return 'not in ECOD';
+  };
+
+  return (
+    <div className="space-y-2">
+      {/* Track with domains */}
+      <div className="relative h-8 bg-gray-100 rounded border">
+        {sortedDomains.map((domain, idx) => {
+          const start = parseRangeStart(domain.range);
+          const end = parseRangeEnd(domain.range);
+          const left = (start / maxPos) * 100;
+          const width = Math.max(((end - start) / maxPos) * 100, 2); // Min 2% width
+
+          return (
+            <div
+              key={domain.domain_id || idx}
+              className={`absolute top-1 bottom-1 rounded border ${getDomainColor(domain)} cursor-pointer`}
+              style={{
+                left: `${left}%`,
+                width: `${width}%`,
+              }}
+              title={`${domain.domain_id}\n${domain.range}\nT-group: ${domain.t_group || 'unknown'}\nDPAM: ${domain.dpam_prob.toFixed(2)}\n${getDomainLabel(domain)}`}
+            >
+              {domain.isCurrent && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-[10px] text-white font-bold">*</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Legend */}
+      <div className="flex flex-wrap gap-3 text-xs">
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 bg-red-500 rounded border border-red-600"></span>
+          <span className="text-gray-600">Current (candidate)</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 bg-green-500 rounded border border-green-600"></span>
+          <span className="text-gray-600">Approved in ECOD</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 bg-orange-400 rounded border border-orange-500"></span>
+          <span className="text-gray-600">Staging</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-3 h-3 bg-gray-400 rounded border border-gray-500"></span>
+          <span className="text-gray-600">Not in ECOD</span>
+        </div>
+      </div>
+
+      {/* Domain list */}
+      <div className="mt-2 text-xs">
+        <table className="w-full">
+          <thead>
+            <tr className="text-gray-500 text-left">
+              <th className="py-1 pr-2">Domain</th>
+              <th className="py-1 pr-2">Range</th>
+              <th className="py-1 pr-2">T-group</th>
+              <th className="py-1 pr-2">DPAM</th>
+              <th className="py-1">Status</th>
+            </tr>
+          </thead>
+          <tbody className="text-gray-700">
+            {sortedDomains.map((domain, idx) => (
+              <tr key={domain.domain_id || idx} className={domain.isCurrent ? 'bg-red-50' : ''}>
+                <td className="py-1 pr-2 font-medium">
+                  {domain.domain_id}
+                  {domain.isCurrent && <span className="ml-1 text-red-600">*</span>}
+                </td>
+                <td className="py-1 pr-2">{domain.range}</td>
+                <td className="py-1 pr-2">{domain.t_group || '-'}</td>
+                <td className="py-1 pr-2">{domain.dpam_prob.toFixed(2)}</td>
+                <td className="py-1">
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                    domain.isCurrent ? 'bg-red-100 text-red-800' :
+                    domain.accession_status === 'approved' ? 'bg-green-100 text-green-800' :
+                    domain.accession_status === 'pending' || domain.accession_status === 'deferred' ? 'bg-orange-100 text-orange-800' :
+                    'bg-gray-100 text-gray-600'
+                  }`}>
+                    {getDomainLabel(domain)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 interface SwissProtProtein {
   id: number;
   source_id: string;
@@ -46,6 +209,8 @@ interface SwissProtProtein {
   hh_prob: number;
   assigned_t_group: string;
   t_group_name: string | null;
+  h_group_name: string | null;
+  x_group_name: string | null;
   cluster_id: number;
   cluster_size: number;
   curation_status: string;
@@ -56,6 +221,14 @@ interface SwissProtProtein {
   domain_segments: DomainSegment[];
   cluster_info: ClusterInfo | null;
   cluster_members: ClusterMember[];
+  // Protein context fields
+  protein_name: string | null;
+  gene_name: string | null;
+  organism: string | null;
+  total_sibling_count: number;
+  ecod_sibling_count: number;
+  has_ecod_siblings: boolean;
+  sibling_domains: SiblingDomain[] | null;
 }
 
 export default function SwissProtProteinPage() {
@@ -276,6 +449,70 @@ export default function SwissProtProteinPage() {
         )}
       </div>
 
+      {/* Protein Context Section */}
+      <div className="bg-white rounded-lg shadow border mb-6">
+        <div className="px-4 py-3 border-b bg-gray-50">
+          <h2 className="font-medium text-gray-900">Protein Context</h2>
+        </div>
+        <div className="p-4">
+          {/* Basic protein info */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div>
+              <dt className="text-sm text-gray-500">Protein Name</dt>
+              <dd className="font-medium text-gray-900">
+                {protein.protein_name || <span className="text-gray-400">Not available</span>}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">Gene</dt>
+              <dd className="font-medium text-gray-900">
+                {protein.gene_name || <span className="text-gray-400">-</span>}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">Organism</dt>
+              <dd className="font-medium text-gray-900">
+                {protein.organism || <span className="text-gray-400">-</span>}
+              </dd>
+            </div>
+          </div>
+
+          {/* Domain Architecture */}
+          {(protein.sibling_domains && protein.sibling_domains.length > 0) || protein.domain_range ? (
+            <div>
+              <h3 className="text-sm font-medium text-gray-700 mb-2">Domain Architecture</h3>
+              <DomainArchitecture
+                currentDomain={{
+                  domain_id: protein.source_id,
+                  range: protein.domain_range,
+                  t_group: protein.assigned_t_group,
+                  dpam_prob: Number(protein.dpam_prob),
+                  accession_status: null,
+                  judge: 'candidate',
+                }}
+                siblingDomains={protein.sibling_domains || []}
+              />
+              <div className="mt-2 text-sm text-gray-600">
+                {protein.total_sibling_count === 0 ? (
+                  <span className="text-green-600">Single domain protein</span>
+                ) : (
+                  <>
+                    {protein.total_sibling_count} sibling domain{protein.total_sibling_count !== 1 ? 's' : ''}, {' '}
+                    {protein.ecod_sibling_count > 0 ? (
+                      <span className="text-blue-600">{protein.ecod_sibling_count} in ECOD</span>
+                    ) : (
+                      <span className="text-yellow-600">none in ECOD yet</span>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-gray-500">No domain architecture data available</div>
+          )}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left: Structure Viewer */}
         <div className="bg-white rounded-lg shadow border overflow-hidden">
@@ -353,16 +590,24 @@ export default function SwissProtProteinPage() {
                     {Number(protein.hh_prob).toFixed(3)}
                   </dd>
                 </div>
-                <div>
-                  <dt className="text-sm text-gray-500">Assigned T-group</dt>
+                <div className="col-span-2">
+                  <dt className="text-sm text-gray-500">ECOD Classification</dt>
                   <dd className="font-medium">
                     {protein.assigned_t_group ? (
-                      <>
-                        {protein.assigned_t_group}
-                        {protein.t_group_name && (
-                          <div className="text-xs text-gray-500 font-normal">{protein.t_group_name}</div>
-                        )}
-                      </>
+                      <div>
+                        <div>{protein.assigned_t_group}</div>
+                        <div className="text-xs text-gray-500 font-normal mt-1">
+                          {protein.x_group_name && (
+                            <div><span className="text-gray-400">X:</span> {protein.x_group_name}</div>
+                          )}
+                          {protein.h_group_name && (
+                            <div><span className="text-gray-400">H:</span> {protein.h_group_name}</div>
+                          )}
+                          {protein.t_group_name && (
+                            <div><span className="text-gray-400">T:</span> {protein.t_group_name}</div>
+                          )}
+                        </div>
+                      </div>
                     ) : (
                       <span className="text-gray-400">Not assigned</span>
                     )}
