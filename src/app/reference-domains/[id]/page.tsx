@@ -160,6 +160,38 @@ export default function ReferenceDomainDetailPage() {
     }
   };
 
+  // Parse domain range segments from seqid_range or pdb_range
+  // Format examples: "A:274-560", "A:5-39,A:60-342", "B:1-24,A:1-97", "10-50,100-150"
+  const parseDomainRanges = (rangeStr: string | null, defaultChain: string): { chain: string; start: number; end: number }[] => {
+    if (!rangeStr) return [];
+
+    const segments: { chain: string; start: number; end: number }[] = [];
+    const parts = rangeStr.split(',');
+
+    for (const part of parts) {
+      const trimmed = part.trim();
+      // Check if segment has chain prefix (e.g., "A:274-560")
+      const colonIdx = trimmed.indexOf(':');
+      let chain = defaultChain;
+      let rangeOnly = trimmed;
+
+      if (colonIdx !== -1) {
+        chain = trimmed.substring(0, colonIdx);
+        rangeOnly = trimmed.substring(colonIdx + 1);
+      }
+
+      const match = rangeOnly.match(/(\d+)-(\d+)/);
+      if (match) {
+        segments.push({
+          chain,
+          start: parseInt(match[1]),
+          end: parseInt(match[2])
+        });
+      }
+    }
+    return segments;
+  };
+
   // Initialize structure viewer
   useEffect(() => {
     if (!viewerElement || !domain) return;
@@ -167,6 +199,9 @@ export default function ReferenceDomainDetailPage() {
     let isMounted = true;
     const pdbId = domain.pdb_id;
     const chainId = domain.chain;
+
+    // Parse domain range segments from seqid_range or pdb_range
+    const domainSegments = parseDomainRanges(domain.seqid_range || domain.pdb_range, chainId);
 
     async function loadStructure() {
       try {
@@ -189,18 +224,39 @@ export default function ReferenceDomainDetailPage() {
 
         viewer.addModel(pdbData, 'pdb');
 
-        // Style the whole structure in gray
-        viewer.setStyle({}, { cartoon: { color: 'gray', opacity: 0.5 } });
+        // Style the whole structure in transparent gray
+        viewer.setStyle({}, { cartoon: { color: 'gray', opacity: 0.3 } });
 
-        // Highlight the specific chain
+        // Style the primary chain in gray (more opaque)
         viewer.setStyle(
           { chain: chainId },
-          { cartoon: { color: 'spectrum' } }
+          { cartoon: { color: 'gray', opacity: 0.8 } }
         );
 
-        viewer.zoomTo({ chain: chainId });
-        viewer.render();
+        // Highlight each domain segment in red
+        if (domainSegments.length > 0) {
+          for (const seg of domainSegments) {
+            viewer.setStyle(
+              { chain: seg.chain, resi: `${seg.start}-${seg.end}` },
+              { cartoon: { color: 'red' } }
+            );
+          }
+          // Zoom to all domain segments
+          const allSelections = domainSegments.map(seg => ({
+            chain: seg.chain,
+            resi: `${seg.start}-${seg.end}`
+          }));
+          viewer.zoomTo(allSelections[0]); // Zoom to first segment
+        } else {
+          // No range info - show whole chain in red as fallback
+          viewer.setStyle(
+            { chain: chainId },
+            { cartoon: { color: 'red' } }
+          );
+          viewer.zoomTo({ chain: chainId });
+        }
 
+        viewer.render();
         setStructureLoading(false);
       } catch (err) {
         if (isMounted) {
