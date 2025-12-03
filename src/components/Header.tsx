@@ -98,10 +98,10 @@ export default function Header() {
                   SwissProt Novel
                 </Link>
                 <Link
-                  href="/problematic-hgroups"
+                  href="/novel-candidates"
                   className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded transition-colors"
                 >
-                  Problematic H-Groups
+                  Novel Candidates
                 </Link>
                 <Link
                   href="/stats"
