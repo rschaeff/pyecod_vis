@@ -29,6 +29,11 @@ interface ClusterMember {
   // From ECOD lookup
   ecod_domain_id: string | null;
   tgroup_name: string | null;
+  // TED overlap
+  ted_id: string | null;
+  ted_chopping: string | null;
+  ted_jaccard: number | null;
+  ted_cath_label: string | null;
 }
 
 export async function GET(
@@ -83,6 +88,8 @@ export async function GET(
     const cluster = clusterResult.rows[0];
 
     // Get cluster members with domain info
+    // Calculate SS percentages from secondary_structure_string since *_residue_count has a bug
+    // (it counts segments, not residues)
     const membersResult = await query<ClusterMember>(`
       SELECT
         nm.id,
@@ -96,15 +103,29 @@ export async function GET(
         nm.best_ecod_evalue,
         nm.best_ecod_tgroup,
         nm.best_ecod_xgroup,
-        nm.helix_pct,
-        nm.strand_pct,
+        -- Calculate correct SS percentages from secondary_structure_string
+        CASE WHEN dd.secondary_structure_string IS NOT NULL AND length(dd.secondary_structure_string) > 0
+          THEN (length(dd.secondary_structure_string) - length(replace(replace(dd.secondary_structure_string, 'H', ''), 'G', '')))::numeric
+               / length(dd.secondary_structure_string) * 100
+          ELSE nm.helix_pct
+        END as helix_pct,
+        CASE WHEN dd.secondary_structure_string IS NOT NULL AND length(dd.secondary_structure_string) > 0
+          THEN (length(dd.secondary_structure_string) - length(replace(replace(dd.secondary_structure_string, 'E', ''), 'B', '')))::numeric
+               / length(dd.secondary_structure_string) * 100
+          ELSE nm.strand_pct
+        END as strand_pct,
         nm.coil_pct,
         nm.is_representative,
         sd.domain_id as domain_domain_id,
-        ed.ecod_domain_id,
-        tc.name as tgroup_name
+        ed.domain_id as ecod_domain_id,
+        tc.name as tgroup_name,
+        nm.ted_id,
+        nm.ted_chopping,
+        nm.ted_jaccard,
+        nm.ted_cath_label
       FROM ecod_curation.novel_candidate_member nm
       LEFT JOIN swissprot.domain sd ON nm.domain_id = sd.id
+      LEFT JOIN swissprot.domain_dssp_detail dd ON nm.domain_id = dd.domain_id
       LEFT JOIN ecod_commons.domains ed ON nm.best_ecod_uid = ed.ecod_uid
       LEFT JOIN ecod_rep.cluster tc ON nm.best_ecod_tgroup::dom_cid = tc.id AND tc.type = 'T'
       WHERE nm.cluster_id = $1
@@ -157,6 +178,7 @@ export async function GET(
         helix_pct: m.helix_pct ? parseFloat(String(m.helix_pct)) : null,
         strand_pct: m.strand_pct ? parseFloat(String(m.strand_pct)) : null,
         coil_pct: m.coil_pct ? parseFloat(String(m.coil_pct)) : null,
+        ted_jaccard: m.ted_jaccard ? parseFloat(String(m.ted_jaccard)) : null,
       })),
       xgroup_distribution: xgroupDist.rows.map(r => ({
         xgroup: r.xgroup,

@@ -29,6 +29,11 @@ interface ClusterMember {
   coil_pct: number | null;
   is_representative: boolean;
   domain_domain_id: string | null;
+  // TED overlap
+  ted_id: string | null;
+  ted_chopping: string | null;
+  ted_jaccard: number | null;
+  ted_cath_label: string | null;
 }
 
 interface Cluster {
@@ -72,6 +77,7 @@ export default function NovelCandidateDetailPage() {
   // Structure viewer state
   const [selectedMember, setSelectedMember] = useState<ClusterMember | null>(null);
   const [structureLoading, setStructureLoading] = useState(false);
+  const [structureError, setStructureError] = useState<string | null>(null);
   const [viewerElement, setViewerElement] = useState<HTMLDivElement | null>(null);
 
   // Curation state
@@ -100,6 +106,7 @@ export default function NovelCandidateDetailPage() {
 
     let isMounted = true;
     setStructureLoading(true);
+    setStructureError(null);
 
     async function loadStructure() {
       try {
@@ -109,9 +116,23 @@ export default function NovelCandidateDetailPage() {
 
         if (!isMounted || !viewerElement) return;
 
-        // Fetch AlphaFold structure using UniProt accession
-        const url = `https://alphafold.ebi.ac.uk/files/AF-${selectedMember!.unp_acc}-F1-model_v4.pdb`;
-        const response = await fetch(url);
+        // First get the correct PDB URL from AlphaFold API
+        const apiUrl = `https://alphafold.ebi.ac.uk/api/prediction/${selectedMember!.unp_acc}`;
+        const apiResponse = await fetch(apiUrl);
+
+        if (!apiResponse.ok) {
+          throw new Error('Structure not available in AlphaFold');
+        }
+
+        const apiData = await apiResponse.json();
+        const pdbUrl = apiData[0]?.pdbUrl;
+
+        if (!pdbUrl) {
+          throw new Error('No PDB URL in AlphaFold response');
+        }
+
+        // Fetch the PDB structure
+        const response = await fetch(pdbUrl);
 
         if (!response.ok) {
           throw new Error('Structure not available');
@@ -126,22 +147,42 @@ export default function NovelCandidateDetailPage() {
 
         viewer.addModel(pdbData, 'pdb');
 
-        // Parse range to highlight domain
+        // Parse discontinuous ranges like "1491-1500,1526-1590" or "A:5-39,A:60-342"
         const range = selectedMember!.domain_range;
-        const rangeMatch = range?.match(/(\d+)-(\d+)/);
+        const segments: Array<{start: number; end: number; chain?: string}> = [];
+
+        if (range) {
+          // Split on comma for multiple segments
+          const parts = range.split(',');
+          for (const part of parts) {
+            // Match optional chain prefix and range: "A:5-39" or "5-39"
+            const match = part.trim().match(/(?:([A-Za-z]):)?(\d+)-(\d+)/);
+            if (match) {
+              segments.push({
+                chain: match[1],
+                start: parseInt(match[2]),
+                end: parseInt(match[3])
+              });
+            }
+          }
+        }
 
         // Style whole protein in gray
         viewer.setStyle({}, { cartoon: { color: 'gray', opacity: 0.5 } });
 
-        // Highlight domain range in red if we have it
-        if (rangeMatch) {
-          const start = parseInt(rangeMatch[1]);
-          const end = parseInt(rangeMatch[2]);
-          viewer.setStyle(
-            { resi: `${start}-${end}` },
-            { cartoon: { color: 'red' } }
-          );
-          viewer.zoomTo({ resi: `${start}-${end}` });
+        // Highlight all domain segments in red
+        if (segments.length > 0) {
+          for (const seg of segments) {
+            const selector: Record<string, string> = { resi: `${seg.start}-${seg.end}` };
+            if (seg.chain) {
+              selector.chain = seg.chain;
+            }
+            viewer.setStyle(selector, { cartoon: { color: 'red' } });
+          }
+
+          // Build combined resi selector for zoom
+          const resiList = segments.map(s => `${s.start}-${s.end}`).join(',');
+          viewer.zoomTo({ resi: resiList });
         } else {
           viewer.zoomTo();
         }
@@ -151,6 +192,7 @@ export default function NovelCandidateDetailPage() {
       } catch (err) {
         if (isMounted) {
           setStructureLoading(false);
+          setStructureError(err instanceof Error ? err.message : 'Failed to load structure');
         }
       }
     }
@@ -240,7 +282,8 @@ export default function NovelCandidateDetailPage() {
 
     const h = helix || 0;
     const s = strand || 0;
-    const c = coil || 0;
+    // Always calculate coil as remainder - DSSP source data often has NULL for coil
+    const c = Math.max(0, 100 - h - s);
 
     return (
       <div className="flex h-3 w-20 rounded overflow-hidden" title={`H:${h.toFixed(0)}% S:${s.toFixed(0)}% C:${c.toFixed(0)}%`}>
@@ -248,6 +291,42 @@ export default function NovelCandidateDetailPage() {
         <div className="bg-blue-400" style={{ width: `${s}%` }} />
         <div className="bg-gray-300" style={{ width: `${c}%` }} />
       </div>
+    );
+  };
+
+  const getTedBadge = (member: ClusterMember) => {
+    if (!member.ted_id || member.ted_jaccard === null) {
+      return <span className="text-gray-400">-</span>;
+    }
+
+    const jaccard = member.ted_jaccard;
+    const color = jaccard >= 0.8 ? 'bg-green-100 text-green-800' :
+                  jaccard >= 0.5 ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-gray-100 text-gray-600';
+
+    // Link to TED page for good matches (Jaccard >= 0.5)
+    if (jaccard >= 0.5) {
+      return (
+        <a
+          href={`https://ted.cathdb.info/ted/${member.ted_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`px-2 py-0.5 rounded text-xs font-medium ${color} hover:opacity-80`}
+          title={`TED: ${member.ted_chopping}${member.ted_cath_label ? ` (${member.ted_cath_label})` : ''}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {jaccard.toFixed(2)}
+        </a>
+      );
+    }
+
+    return (
+      <span
+        className={`px-2 py-0.5 rounded text-xs font-medium ${color}`}
+        title={`TED: ${member.ted_chopping}${member.ted_cath_label ? ` (${member.ted_cath_label})` : ''}`}
+      >
+        {jaccard.toFixed(2)}
+      </span>
     );
   };
 
@@ -421,6 +500,14 @@ export default function NovelCandidateDetailPage() {
                   <div className="text-gray-500">Select a member to view structure</div>
                 </div>
               )}
+              {structureError && !structureLoading && (
+                <div className="absolute inset-0 bg-red-50 flex items-center justify-center">
+                  <div className="text-center text-red-600">
+                    <div className="mb-2">⚠️ {structureError}</div>
+                    <div className="text-sm text-gray-500">{selectedMember?.unp_acc}</div>
+                  </div>
+                </div>
+              )}
             </div>
             {selectedMember && (
               <div className="p-3 border-t bg-gray-50 text-sm">
@@ -511,6 +598,7 @@ export default function NovelCandidateDetailPage() {
                   <tr>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">UniProt</th>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">LDDT</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">TED</th>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">SS</th>
                   </tr>
                 </thead>
@@ -541,6 +629,7 @@ export default function NovelCandidateDetailPage() {
                         <div className="text-xs text-gray-500">{member.domain_range}</div>
                       </td>
                       <td className="px-3 py-2">{getLddtBadge(member.best_ecod_lddt)}</td>
+                      <td className="px-3 py-2">{getTedBadge(member)}</td>
                       <td className="px-3 py-2">
                         {getSSBar(member.helix_pct, member.strand_pct, member.coil_pct)}
                       </td>
