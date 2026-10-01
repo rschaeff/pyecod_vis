@@ -13,16 +13,11 @@ const dbConfig = {
   port: parseInt(process.env.DB_PORT || '45000'),
   database: process.env.DB_NAME || 'ecod_protein',
   user: process.env.DB_USER || 'ecod',
-  password: process.env.DB_PASSWORD, // REQUIRED - must be set in .env file
+  // No password here: node-postgres falls back to ~/.pgpass (or PGPASSWORD)
   max: 20, // Maximum number of connections in pool
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
   connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection can't be established
 };
-
-// Validate required environment variables
-if (!dbConfig.password) {
-  throw new Error('DB_PASSWORD environment variable is required. Please set it in your .env file.');
-}
 
 // Create connection pool (singleton)
 let pool: Pool | null = null;
