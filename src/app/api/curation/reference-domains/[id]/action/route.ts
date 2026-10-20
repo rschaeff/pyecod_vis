@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { cookies } from 'next/headers';
+import { getCurrentSession } from '@/lib/auth';
 
 interface CurationActionRequest {
   action: 'mask_from_search' | 'remove' | 'reclassify' | 'flag_review';
@@ -26,33 +26,17 @@ export async function POST(
     const { id } = await params;
     const ecodDomainId = id;
 
-    // Get curator from session
-    const cookieStore = await cookies();
-    const sessionId = cookieStore.get('ecod_session')?.value;
+    // Get curator from session (same cookie and tables as /api/auth/login)
+    const sessionInfo = await getCurrentSession();
 
-    if (!sessionId) {
+    if (!sessionInfo) {
       return NextResponse.json(
         { error: 'Authentication required' },
         { status: 401 }
       );
     }
 
-    // Verify session and get curator
-    const sessionResult = await query(`
-      SELECT c.id, c.username, c.display_name
-      FROM ecod_curation.curator_sessions cs
-      JOIN ecod_curation.curators c ON cs.curator_id = c.id
-      WHERE cs.session_id = $1 AND cs.expires_at > NOW()
-    `, [sessionId]);
-
-    if (sessionResult.rows.length === 0) {
-      return NextResponse.json(
-        { error: 'Invalid or expired session' },
-        { status: 401 }
-      );
-    }
-
-    const curator = sessionResult.rows[0];
+    const curator = sessionInfo.curator;
 
     // Parse request body
     const body: CurationActionRequest = await request.json();
